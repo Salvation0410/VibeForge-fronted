@@ -56,11 +56,13 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import type { FormInstance, Rule } from 'ant-design-vue/es/form'
 import { loginUser, type SysUserLoginRequest } from '@/api/sysUserApi'
+import { useLoginUserStore } from '@/stores/loginUser'
 
 type LoginMode = 'account' | 'email'
 
 const router = useRouter()
 const route = useRoute()
+const loginUserStore = useLoginUserStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const mode = ref<LoginMode>('account')
@@ -113,6 +115,7 @@ const handleSubmit = async () => {
       throw new Error(res.data?.message || '登录失败')
     }
 
+    loginUserStore.setLoginUser(res.data?.data?.user ?? null)
     message.success('登录成功')
     const redirect = route.query.redirect
     if (typeof redirect === 'string' && redirect) {

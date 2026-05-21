@@ -70,8 +70,8 @@ Platform</h1>
         </div>
 
         <footer class="card-footer">
-          <span>© 2026 YuAIGenerate. 普通用户入口示例。</span>
-          <span class="footer-links">首页占位 · 隐私 · 条款 · 联系</span>
+          <span>© 2026 YuAIGenerate</span>
+          <span class="footer-links">Clean UI · Responsive · Web</span>
         </footer>
       </section>
     </main>
