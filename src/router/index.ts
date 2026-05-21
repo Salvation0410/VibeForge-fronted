@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import AuthLayout from '@/layouts/AuthLayout.vue'
 import HomeView from '@/pages/HomeView.vue'
 
 const router = createRouter({
@@ -6,6 +7,20 @@ const router = createRouter({
   routes: [
     {
       path: '/',
+      redirect: '/login',
+    },
+    {
+      path: '/login',
+      name: 'login',
+      component: AuthLayout,
+    },
+    {
+      path: '/register',
+      name: 'register',
+      component: AuthLayout,
+    },
+    {
+      path: '/home',
       name: 'home',
       component: HomeView,
     },
