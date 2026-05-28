@@ -7,35 +7,14 @@
     <main class="auth-shell">
       <aside class="hero">
         <div class="brand">
-          <div class="brand-mark">
-            <svg viewBox="0 0 40 40" aria-hidden="true">
-              <defs>
-                <linearGradient id="brandGradientTop" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#22d3ee" />
-                  <stop offset="100%" stop-color="#1ea7c7" />
-                </linearGradient>
-                <linearGradient id="brandGradientBottom" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#6ee7f5" />
-                  <stop offset="100%" stop-color="#16a6d9" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M10 11L20 6L30 11V18L20 24L10 18V11Z"
-                class="mark-top"
-              />
-              <path
-                d="M12 22L20 18L28 22V30L20 34L12 30V22Z"
-                class="mark-bottom"
-              />
-            </svg>
-          </div>
-          <span class="brand-name">YuAIGenerate</span>
+          <img class="brand-logo" src="@/assets/logo.png" alt="一句话呈所想" />
+          <span class="brand-name">一句话呈所想</span>
         </div>
 
-        <h1>AI-Powered
-Development
-Platform</h1>
-        <p>Build smarter. Ship faster. Keep the flow.</p>
+        <div>
+          <h1>AI 驱动的网站与应用生成平台</h1>
+          <p>登录后即可通过对话创建网站应用、查看预览效果并完成部署。</p>
+        </div>
 
         <div class="hero-illustration" aria-hidden="true">
           <div class="chip chip-back"></div>
@@ -70,8 +49,8 @@ Platform</h1>
         </div>
 
         <footer class="card-footer">
-          <span>© 2026 YuAIGenerate</span>
-          <span class="footer-links">Clean UI · Responsive · Web</span>
+          <span>© 2026 一句话呈所想</span>
+          <span class="footer-links">轻盈 · 现代 · 对话式工作流</span>
         </footer>
       </section>
     </main>
@@ -172,25 +151,10 @@ const go = (path: '/login' | '/register') => {
   gap: 14px;
 }
 
-.brand-mark {
-  width: 38px;
-  height: 38px;
-  position: relative;
-}
-
-.brand-mark svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-  filter: drop-shadow(0 12px 28px rgba(32, 165, 204, 0.24));
-}
-
-.mark-top {
-  fill: url(#brandGradientTop);
-}
-
-.mark-bottom {
-  fill: url(#brandGradientBottom);
+.brand-logo {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
 }
 
 .brand-name {
@@ -206,7 +170,6 @@ const go = (path: '/login' | '/register') => {
   font-size: clamp(40px, 4.2vw, 68px);
   line-height: 1.06;
   letter-spacing: -0.05em;
-  white-space: pre-line;
 }
 
 .hero p {
@@ -261,8 +224,7 @@ const go = (path: '/login' | '/register') => {
 .chip-front {
   top: 14px;
   transform: rotate(10deg);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(240, 248, 255, 0.58));
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(240, 248, 255, 0.58));
 }
 
 .card {
@@ -341,7 +303,6 @@ const go = (path: '/login' | '/register') => {
   position: relative;
   padding: 34px 40px 32px;
   min-height: 100%;
-  transition: opacity 0.2s ease, filter 0.2s ease, transform 0.2s ease;
 }
 
 @media (max-width: 1180px) {
@@ -355,6 +316,7 @@ const go = (path: '/login' | '/register') => {
 
   .hero h1 {
     margin-top: 42px;
+    max-width: 12ch;
   }
 }
 

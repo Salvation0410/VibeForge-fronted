@@ -44,7 +44,7 @@ export const useLoginUserStore = defineStore('loginUser', () => {
       loading.value = true
       try {
         const res = await getLoginUser()
-        const code = Number(res.data?.code ?? -1)
+        const code = Number(res.code ?? -1)
 
         if (!SUCCESS_CODES.has(code)) {
           clearLoginUser()
@@ -52,7 +52,7 @@ export const useLoginUserStore = defineStore('loginUser', () => {
           return null
         }
 
-        setLoginUser(res.data?.data?.user ?? null)
+        setLoginUser(res.data?.user ?? null)
         hasFetched.value = true
         return loginUser.value
       } catch (_error) {

@@ -1,20 +1,10 @@
-import type { AxiosInstance, AxiosRequestConfig } from 'axios'
-import request from '@/request'
-
-export const userApiClient: AxiosInstance = request
+import axios from 'axios'
+import type { AxiosResponse } from 'axios'
 
 export interface BaseResponse<T> {
   code: number
   data: T
   message: string
-}
-
-export interface PageResult<T> {
-  pageNumber: number
-  pageSize: number
-  totalPage: number
-  totalRow: number
-  records: T[]
 }
 
 export interface PageRequest {
@@ -24,31 +14,18 @@ export interface PageRequest {
   sortOrder?: string
 }
 
-export type SnowflakeId = string
-export type RequestId = string | number
-
-export interface SysUserRegisterRequest {
-  account?: string
-  email?: string
-  password: string
-  confirmPassword: string
-  nickname?: string
-  userProfile?: string
-  userRole?: string
-}
-
-export interface SysUserLoginRequest {
-  account?: string
-  email?: string
-  password: string
+export interface PageResult<T> {
+  pageNumber?: number
+  pageSize?: number
+  totalPage?: number
+  totalRow?: number
+  records: T[]
 }
 
 export interface SysUser {
-  id?: SnowflakeId
+  id?: number
   account?: string
   email?: string
-  passwordHash?: string
-  passwordSalt?: string
   nickname?: string
   avatarUrl?: string
   userProfile?: string
@@ -58,13 +35,12 @@ export interface SysUser {
   emailVerified?: number
   lastLoginTime?: string
   lastLoginIp?: string
-  deleted?: number
   createTime?: string
   updateTime?: string
 }
 
 export interface SysUserVO {
-  id: SnowflakeId
+  id?: number
   account?: string
   email?: string
   nickname?: string
@@ -77,102 +53,151 @@ export interface SysUserVO {
 }
 
 export interface LoginUserVO {
-  user: SysUserVO
+  user?: SysUserVO
 }
 
-export function adminCreateUser(
-  data: SysUserRegisterRequest,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.post<BaseResponse<SysUser>>('/users/admin', data, config)
+export interface SysUserRegisterRequest {
+  account?: string
+  email?: string
+  password: string
+  confirmPassword: string
+  nickname?: string
+  avatarUrl?: string
+  userProfile?: string
+  userRole?: string
 }
 
-export function registerUser(
-  data: SysUserRegisterRequest,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.post<BaseResponse<SysUser>>('/users', data, config)
+export interface SysUserLoginRequest {
+  account?: string
+  email?: string
+  password: string
 }
 
-export function loginUser(
-  data: SysUserLoginRequest,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.post<BaseResponse<LoginUserVO>>('/users/login', data, config)
+export interface SysUserUpdateRequest {
+  account?: string
+  email?: string
+  nickname?: string
+  avatarUrl?: string
+  userProfile?: string
+  userRole?: string
+  status?: number
 }
 
-export function getLoginUser(
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.get<BaseResponse<LoginUserVO>>('/users/login', config)
+const userRequest = axios.create({
+  baseURL: '/api',
+  timeout: 30000,
+  withCredentials: true,
+})
+
+function unwrapResponse<T>(response: AxiosResponse<BaseResponse<T>>): BaseResponse<T> {
+  return response.data
 }
 
-export function logoutUser(
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.delete<BaseResponse<boolean>>('/users/login', config)
-}
+type FormDataValue = string | number | boolean | Blob | File | null | undefined
 
-export function adminGetUserById(
-  id: RequestId,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.get<BaseResponse<SysUser>>(`/users/${id}`, config)
-}
-
-export function getUserVoById(
-  id: RequestId,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.get<BaseResponse<SysUserVO>>(`/users/${id}/vo`, config)
-}
-
-export function pageUsers(
-  params?: PageRequest,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.get<BaseResponse<PageResult<SysUserVO>>>('/users/page', {
-    ...config,
-    params,
+function buildUserFormData(data: object, avatarFile?: File | Blob): FormData {
+  const formData = new FormData()
+  Object.entries(data as Record<string, FormDataValue>).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      if (value instanceof Blob) {
+        formData.append(key, value)
+        return
+      }
+      formData.append(key, String(value))
+    }
   })
+  if (avatarFile) {
+    formData.append('avatarFile', avatarFile)
+  }
+  return formData
 }
 
-export function updateUser(
-  id: RequestId,
-  data: Partial<SysUser>,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.put<BaseResponse<boolean>>(`/users/${id}`, data, config)
+export function registerUser(data: SysUserRegisterRequest): Promise<BaseResponse<SysUser>> {
+  return userRequest.post<BaseResponse<SysUser>>('/users', data).then(unwrapResponse)
 }
 
-export function deleteUser(
-  id: RequestId,
-  config?: AxiosRequestConfig,
-  client: AxiosInstance = userApiClient,
-) {
-  return client.delete<BaseResponse<boolean>>(`/users/${id}`, config)
+export function registerUserWithAvatar(
+  data: SysUserRegisterRequest,
+  avatarFile?: File | Blob,
+): Promise<BaseResponse<SysUser>> {
+  const formData = buildUserFormData(data, avatarFile)
+  return userRequest.post<BaseResponse<SysUser>>('/users', formData).then(unwrapResponse)
 }
 
-export const sysUserApi = {
-  adminCreateUser,
+export function createUserByAdmin(data: SysUserRegisterRequest): Promise<BaseResponse<SysUser>> {
+  return userRequest.post<BaseResponse<SysUser>>('/users/admin', data).then(unwrapResponse)
+}
+
+export function createUserByAdminWithAvatar(
+  data: SysUserRegisterRequest,
+  avatarFile?: File | Blob,
+): Promise<BaseResponse<SysUser>> {
+  const formData = buildUserFormData(data, avatarFile)
+  return userRequest.post<BaseResponse<SysUser>>('/users/admin', formData).then(unwrapResponse)
+}
+
+export function loginUser(data: SysUserLoginRequest): Promise<BaseResponse<LoginUserVO>> {
+  return userRequest.post<BaseResponse<LoginUserVO>>('/users/login', data).then(unwrapResponse)
+}
+
+export function getLoginUser(): Promise<BaseResponse<LoginUserVO>> {
+  return userRequest.get<BaseResponse<LoginUserVO>>('/users/login').then(unwrapResponse)
+}
+
+export function logoutUser(): Promise<BaseResponse<boolean>> {
+  return userRequest.delete<BaseResponse<boolean>>('/users/login').then(unwrapResponse)
+}
+
+export function getLoginUserDetail(): Promise<BaseResponse<SysUser>> {
+  return userRequest.get<BaseResponse<SysUser>>('/users/login/detail').then(unwrapResponse)
+}
+
+export function getUserById(id: number): Promise<BaseResponse<SysUser>> {
+  return userRequest.get<BaseResponse<SysUser>>(`/users/${id}`).then(unwrapResponse)
+}
+
+export function getUserVoById(id: number): Promise<BaseResponse<SysUserVO>> {
+  return userRequest.get<BaseResponse<SysUserVO>>(`/users/${id}/vo`).then(unwrapResponse)
+}
+
+export function getUserPage(params: PageRequest): Promise<BaseResponse<PageResult<SysUserVO>>> {
+  return userRequest
+    .get<BaseResponse<PageResult<SysUserVO>>>('/users/page', { params })
+    .then(unwrapResponse)
+}
+
+export function updateUser(id: number, data: SysUserUpdateRequest): Promise<BaseResponse<boolean>> {
+  return userRequest.put<BaseResponse<boolean>>(`/users/${id}`, data).then(unwrapResponse)
+}
+
+export function updateUserWithAvatar(
+  id: number,
+  data: SysUserUpdateRequest,
+  avatarFile?: File | Blob,
+): Promise<BaseResponse<boolean>> {
+  const formData = buildUserFormData(data, avatarFile)
+  return userRequest.put<BaseResponse<boolean>>(`/users/${id}`, formData).then(unwrapResponse)
+}
+
+export function deleteUser(id: number): Promise<BaseResponse<boolean>> {
+  return userRequest.delete<BaseResponse<boolean>>(`/users/${id}`).then(unwrapResponse)
+}
+
+const userApi = {
   registerUser,
+  registerUserWithAvatar,
+  createUserByAdmin,
+  createUserByAdminWithAvatar,
   loginUser,
   getLoginUser,
   logoutUser,
-  adminGetUserById,
+  getLoginUserDetail,
+  getUserById,
   getUserVoById,
-  pageUsers,
+  getUserPage,
   updateUser,
+  updateUserWithAvatar,
   deleteUser,
 }
 
-export default sysUserApi
+export default userApi

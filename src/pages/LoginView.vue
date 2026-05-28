@@ -1,8 +1,8 @@
 <template>
-  <section class="auth-panel" :class="{ 'is-active': isActive }">
+  <section class="auth-panel">
     <div class="panel-head">
-      <h2>Welcome back</h2>
-      <p>登录后继续进入普通用户首页占位页</p>
+      <h2>欢迎回来</h2>
+      <p>登录后继续进入首页、对话生成页面和管理后台。</p>
     </div>
 
     <a-segmented v-model:value="mode" :options="modeOptions" class="mode-switch" />
@@ -51,7 +51,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import type { FormInstance, Rule } from 'ant-design-vue/es/form'
@@ -66,8 +66,6 @@ const loginUserStore = useLoginUserStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const mode = ref<LoginMode>('account')
-
-const isActive = computed(() => route.name === 'login')
 
 const modeOptions = [
   { label: '账号登录', value: 'account' },
@@ -110,12 +108,12 @@ const handleSubmit = async () => {
         : { email: email.trim(), password: formState.password }
 
     const res = await loginUser(payload)
-    const code = res.data?.code
+    const code = res.code
     if (code !== 0 && code !== 20000) {
-      throw new Error(res.data?.message || '登录失败')
+      throw new Error(res.message || '登录失败')
     }
 
-    loginUserStore.setLoginUser(res.data?.data?.user ?? null)
+    loginUserStore.setLoginUser(res.data?.user ?? null)
     message.success('登录成功')
     const redirect = route.query.redirect
     if (typeof redirect === 'string' && redirect) {

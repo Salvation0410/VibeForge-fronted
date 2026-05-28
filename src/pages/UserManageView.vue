@@ -1,45 +1,67 @@
 <template>
   <section class="user-page">
-    <a-card class="toolbar-card">
-      <div class="toolbar">
-        <div>
+    <a-card class="hero-card" :bordered="false">
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <span class="hero-eyebrow">Admin workspace</span>
           <h2>用户管理</h2>
-          <p>仅管理员可见。支持查询、创建、编辑和删除。</p>
+          <p>创建账号、查看资料和调整启用状态，管理员常用操作都集中在这里。</p>
+
+          <div class="hero-stats">
+            <div class="stat-chip">
+              <span class="stat-label">用户总数</span>
+              <strong>{{ pagination.total }}</strong>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-label">当前页管理员</span>
+              <strong>{{ adminCount }}</strong>
+            </div>
+            <div class="stat-chip">
+              <span class="stat-label">当前页禁用</span>
+              <strong>{{ disabledCount }}</strong>
+            </div>
+          </div>
         </div>
 
-        <a-space wrap>
-          <a-input
+        <div class="hero-panel">
+          <a-input-search
             v-model:value="searchText"
-            placeholder="搜索账号 / 邮箱 / 昵称"
-            style="width: 280px"
+            allow-clear
+            placeholder="搜索当前页账号 / 邮箱 / 昵称"
+            size="large"
           />
-          <a-button @click="loadUsers">刷新</a-button>
-          <a-button type="primary" @click="openCreate">新增用户</a-button>
-        </a-space>
+
+          <div class="hero-actions">
+            <a-button size="large" @click="handleResetSearch">清空筛选</a-button>
+            <a-button size="large" @click="loadUsers">刷新列表</a-button>
+            <a-button type="primary" size="large" @click="openCreate">新增用户</a-button>
+          </div>
+        </div>
       </div>
     </a-card>
 
-    <a-card class="table-card">
+    <a-card class="table-card" :bordered="false">
       <a-table
         :columns="columns"
         :data-source="filteredUsers"
         :loading="listLoading"
         :row-key="rowKey"
         :pagination="pagination"
+        :scroll="{ x: 1120 }"
         @change="handleTableChange"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'avatarUrl'">
             <div class="avatar-cell">
-              <a-avatar :size="40" :src="resolveAvatarUrl(record)">
+              <a-avatar :size="44" :src="record.avatarUrl || undefined">
                 {{ avatarFallback(record) }}
               </a-avatar>
             </div>
           </template>
 
-          <template v-if="column.key === 'userRole'">
+          <template v-else-if="column.key === 'userRole'">
             <a-tag :color="record.userRole === 'admin' ? 'red' : 'blue'">
-              {{ record.userRole || '-' }}
+              {{ record.userRole === 'admin' ? '管理员' : '普通用户' }}
             </a-tag>
           </template>
 
@@ -53,9 +75,13 @@
             {{ registerTypeText(record.registerType) }}
           </template>
 
+          <template v-else-if="column.key === 'lastLoginTime'">
+            {{ formatDateTime(record.lastLoginTime) }}
+          </template>
+
           <template v-else-if="column.key === 'action'">
             <a-space>
-              <a-button type="link" @click="openEdit(record)">编辑</a-button>
+              <a-button type="link" @click="openEdit(record)">查看 / 调整状态</a-button>
               <a-button type="link" danger @click="handleDelete(record)">删除</a-button>
             </a-space>
           </template>
@@ -66,158 +92,202 @@
     <a-modal
       v-model:open="createOpen"
       title="新增用户"
+      :width="720"
       :confirm-loading="createLoading"
+      ok-text="创建用户"
+      cancel-text="取消"
+      destroy-on-close
       @ok="handleCreate"
       @cancel="resetCreateForm"
     >
       <a-form ref="createFormRef" :model="createForm" :rules="createRules" layout="vertical">
-        <a-form-item label="头像">
-          <div class="avatar-upload">
-            <a-avatar :size="64" :src="createAvatarPreview">
-              {{ createAvatarFallback }}
-            </a-avatar>
-
-            <div class="avatar-upload-content">
-              <div class="avatar-upload-actions">
-                <a-upload
-                  accept="image/*"
-                  :before-upload="handleCreateAvatarBeforeUpload"
-                  :show-upload-list="false"
-                >
-                  <a-button>选择图片</a-button>
-                </a-upload>
-                <a-button v-if="createAvatarPreview" type="link" danger @click="clearCreateAvatar">
-                  清除
-                </a-button>
-              </div>
-              <p class="upload-hint">
-                支持 JPG、PNG、WebP。当前先做本地预览，后续接入 OSS 时只需要替换上传逻辑。
-              </p>
-              <p v-if="createAvatarFileName" class="file-name">{{ createAvatarFileName }}</p>
-            </div>
-          </div>
-        </a-form-item>
-
         <a-segmented v-model:value="createMode" :options="createModeOptions" class="mode-switch" />
 
-        <a-form-item v-if="createMode === 'account'" name="account" label="账号">
-          <a-input v-model:value="createForm.account" placeholder="请输入账号" />
-        </a-form-item>
+        <div class="form-grid">
+          <a-form-item v-if="createMode === 'account'" name="account" label="账号">
+            <a-input v-model:value="createForm.account" placeholder="请输入账号" />
+          </a-form-item>
 
-        <a-form-item v-else name="email" label="邮箱">
-          <a-input v-model:value="createForm.email" placeholder="name@example.com" />
-        </a-form-item>
+          <a-form-item v-else name="email" label="邮箱">
+            <a-input v-model:value="createForm.email" placeholder="name@example.com" />
+          </a-form-item>
 
-        <a-form-item name="password" label="密码">
-          <a-input-password v-model:value="createForm.password" placeholder="请输入密码" />
-        </a-form-item>
+          <a-form-item name="nickname" label="昵称">
+            <a-input v-model:value="createForm.nickname" placeholder="给用户一个好识别的名字" />
+          </a-form-item>
 
-        <a-form-item name="confirmPassword" label="确认密码">
-          <a-input-password
-            v-model:value="createForm.confirmPassword"
-            placeholder="请再次输入密码"
-          />
-        </a-form-item>
+          <a-form-item name="password" label="密码">
+            <a-input-password v-model:value="createForm.password" placeholder="至少 6 位" />
+          </a-form-item>
 
-        <a-form-item name="nickname" label="昵称（可选）">
-          <a-input v-model:value="createForm.nickname" placeholder="请输入昵称" />
-        </a-form-item>
+          <a-form-item name="confirmPassword" label="确认密码">
+            <a-input-password
+              v-model:value="createForm.confirmPassword"
+              placeholder="请再次输入密码"
+            />
+          </a-form-item>
+        </div>
 
-        <a-form-item name="userProfile" label="简介（可选）">
+        <a-form-item name="userProfile" label="个人简介">
           <a-textarea
             v-model:value="createForm.userProfile"
             :rows="4"
-            placeholder="简单描述一下用户"
+            placeholder="这段简介会显示在用户资料里，可留空"
           />
+        </a-form-item>
+
+        <a-form-item label="头像上传">
+          <div class="avatar-editor">
+            <div class="avatar-preview-card">
+              <a-avatar :size="88" :src="createAvatarPreview || undefined" class="preview-avatar">
+                {{ createAvatarText }}
+              </a-avatar>
+              <div>
+                <div class="preview-title">创建时上传头像</div>
+                <p>支持 JPG、PNG、WEBP、GIF，建议控制在 5MB 以内。</p>
+              </div>
+            </div>
+
+            <div class="avatar-actions">
+              <a-upload
+                accept="image/*"
+                :show-upload-list="false"
+                :before-upload="handleCreateAvatarBeforeUpload"
+              >
+                <a-button>选择图片</a-button>
+              </a-upload>
+              <a-button v-if="createAvatarFile" @click="clearCreateAvatar">移除本次上传</a-button>
+            </div>
+          </div>
         </a-form-item>
       </a-form>
     </a-modal>
 
     <a-modal
       v-model:open="editOpen"
-      title="编辑用户"
-      :confirm-loading="editLoading"
+      title="查看用户"
+      :width="760"
+      :confirm-loading="editSaving"
+      ok-text="保存状态"
+      cancel-text="关闭"
+      destroy-on-close
       @ok="handleEdit"
       @cancel="resetEditForm"
     >
-      <a-form ref="editFormRef" :model="editForm" layout="vertical">
-        <a-form-item label="账号">
-          <a-input v-model:value="editForm.account" disabled />
-        </a-form-item>
+      <a-spin :spinning="editDetailLoading">
+        <a-form ref="editFormRef" :model="editForm" layout="vertical">
+          <div class="form-grid">
+            <a-form-item label="账号">
+              <a-input :value="editForm.account" disabled />
+            </a-form-item>
 
-        <a-form-item label="邮箱">
-          <a-input v-model:value="editForm.email" disabled />
-        </a-form-item>
+            <a-form-item label="邮箱">
+              <a-input :value="editForm.email" disabled />
+            </a-form-item>
 
-        <a-form-item label="昵称">
-          <a-input v-model:value="editForm.nickname" />
-        </a-form-item>
+            <a-form-item label="昵称">
+              <a-input :value="editForm.nickname || '-'" disabled />
+            </a-form-item>
 
-        <a-form-item label="头像地址">
-          <a-input v-model:value="editForm.avatarUrl" placeholder="请输入头像 URL" />
-        </a-form-item>
+            <a-form-item label="角色">
+              <a-input :value="roleText(editForm.userRole)" disabled />
+            </a-form-item>
+          </div>
 
-        <a-form-item label="简介">
-          <a-textarea v-model:value="editForm.userProfile" :rows="4" />
-        </a-form-item>
+          <a-form-item label="头像">
+            <div class="avatar-editor readonly-avatar">
+              <div class="avatar-preview-card">
+                <a-avatar :size="88" :src="editForm.avatarUrl || undefined" class="preview-avatar">
+                  {{ editAvatarText }}
+                </a-avatar>
+                <div>
+                  <div class="preview-title">当前头像</div>
+                  <p>管理员可查看用户资料，本页仅允许调整启用状态。</p>
+                </div>
+              </div>
+            </div>
+          </a-form-item>
 
-        <a-form-item label="状态">
-          <a-select v-model:value="editForm.status">
-            <a-select-option :value="0">正常</a-select-option>
-            <a-select-option :value="1">禁用</a-select-option>
-          </a-select>
-        </a-form-item>
-      </a-form>
+          <div class="meta-grid">
+            <div class="meta-card">
+              <span>注册方式</span>
+              <strong>{{ registerTypeText(editForm.registerType) }}</strong>
+            </div>
+            <div class="meta-card">
+              <span>最近登录</span>
+              <strong>{{ formatDateTime(editForm.lastLoginTime) }}</strong>
+            </div>
+          </div>
+
+          <a-form-item label="个人简介">
+            <a-textarea :value="editForm.userProfile || '-'" :rows="4" disabled />
+          </a-form-item>
+
+          <a-form-item label="状态">
+            <a-select v-model:value="editForm.status">
+              <a-select-option :value="0">正常</a-select-option>
+              <a-select-option :value="1">禁用</a-select-option>
+            </a-select>
+          </a-form-item>
+        </a-form>
+      </a-spin>
     </a-modal>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import type { TableProps, UploadProps } from 'ant-design-vue'
 import type { FormInstance, Rule } from 'ant-design-vue/es/form'
-import type { TableProps } from 'ant-design-vue'
-import { Modal, message } from 'ant-design-vue'
+import { Modal, Upload, message } from 'ant-design-vue'
 import {
-  adminCreateUser,
+  createUserByAdminWithAvatar,
   deleteUser,
-  pageUsers,
+  getUserById,
+  getUserPage,
   updateUser,
+  type SysUser,
   type SysUserRegisterRequest,
   type SysUserVO,
 } from '@/api/sysUserApi'
+import { formatDateTime, isSuccessCode } from '@/utils/appUtils'
 
 type CreateMode = 'account' | 'email'
+type CreateFormModel = SysUserRegisterRequest & { confirmPassword: string }
+type EditFormModel = Partial<SysUser> & { id?: number }
 
-const SUCCESS_CODES = new Set([0, 20000])
+const AVATAR_SIZE_LIMIT = 5 * 1024 * 1024
 
 const listLoading = ref(false)
 const createLoading = ref(false)
-const editLoading = ref(false)
+const editSaving = ref(false)
+const editDetailLoading = ref(false)
 const users = ref<SysUserVO[]>([])
 const searchText = ref('')
-const avatarPreviewMap = reactive<Record<string, string>>({})
+const editSnapshot = ref<SysUser | null>(null)
 
 const pagination = reactive({
   current: 1,
   pageSize: 10,
   total: 0,
   showSizeChanger: true,
+  showTotal: (total: number) => `共 ${total} 条`,
 })
 
 const columns: TableProps['columns'] = [
-  { title: 'ID', dataIndex: 'id', key: 'id', width: 120 },
+  { title: 'ID', dataIndex: 'id', key: 'id', width: 110 },
   { title: '头像', key: 'avatarUrl', width: 92, align: 'center' },
-  { title: '账号', dataIndex: 'account', key: 'account' },
-  { title: '邮箱', dataIndex: 'email', key: 'email' },
-  { title: '昵称', dataIndex: 'nickname', key: 'nickname' },
-  { title: '角色', key: 'userRole' },
-  { title: '状态', key: 'status' },
-  { title: '注册方式', key: 'registerType' },
-  { title: '最后登录', dataIndex: 'lastLoginTime', key: 'lastLoginTime' },
-  { title: '操作', key: 'action', width: 180 },
+  { title: '账号', dataIndex: 'account', key: 'account', width: 170 },
+  { title: '邮箱', dataIndex: 'email', key: 'email', width: 220 },
+  { title: '昵称', dataIndex: 'nickname', key: 'nickname', width: 150 },
+  { title: '角色', key: 'userRole', width: 110 },
+  { title: '状态', key: 'status', width: 100 },
+  { title: '注册方式', key: 'registerType', width: 120 },
+  { title: '最近登录', key: 'lastLoginTime', width: 180 },
+  { title: '操作', key: 'action', fixed: 'right', width: 190 },
 ]
 
-const rowKey = (record: SysUserVO) => record.id
+const rowKey = (record: SysUserVO) => record.id ?? record.account ?? record.email ?? ''
 
 const filteredUsers = computed(() => {
   const keyword = searchText.value.trim().toLowerCase()
@@ -225,18 +295,21 @@ const filteredUsers = computed(() => {
     return users.value
   }
   return users.value.filter((item) =>
-    [item.account, item.email, item.nickname].some((value) =>
-      value?.toLowerCase().includes(keyword),
-    ),
+    [item.account, item.email, item.nickname].some((value) => value?.toLowerCase().includes(keyword)),
   )
 })
+
+const adminCount = computed(
+  () => filteredUsers.value.filter((item) => item.userRole === 'admin').length,
+)
+const disabledCount = computed(
+  () => filteredUsers.value.filter((item) => Number(item.status ?? 0) !== 0).length,
+)
 
 const createOpen = ref(false)
 const createMode = ref<CreateMode>('account')
 const createFormRef = ref<FormInstance>()
-const createAvatarPreview = ref('')
-const createAvatarFileName = ref('')
-const createForm = reactive<SysUserRegisterRequest & { confirmPassword: string }>({
+const createForm = reactive<CreateFormModel>({
   account: '',
   email: '',
   password: '',
@@ -245,52 +318,30 @@ const createForm = reactive<SysUserRegisterRequest & { confirmPassword: string }
   userProfile: '',
 })
 
+const createAvatarFile = ref<File>()
+const createAvatarPreview = ref('')
+const createAvatarText = computed(() => getAvatarLetter(createForm.nickname || createForm.account))
+
+const editOpen = ref(false)
+const editFormRef = ref<FormInstance>()
+const editForm = reactive<EditFormModel>({
+  id: undefined,
+  account: '',
+  email: '',
+  nickname: '',
+  avatarUrl: '',
+  userProfile: '',
+  userRole: '',
+  registerType: undefined,
+  lastLoginTime: '',
+  status: 0,
+})
+const editAvatarText = computed(() => getAvatarLetter(editForm.nickname || editForm.account))
+
 const createModeOptions = [
   { label: '账号创建', value: 'account' },
   { label: '邮箱创建', value: 'email' },
 ]
-
-const getAvatarLetter = (value?: string) => (value?.trim().slice(0, 1) || 'U').toUpperCase()
-
-const avatarFallback = (record: Pick<SysUserVO, 'nickname' | 'account'>) => {
-  return getAvatarLetter(record.nickname || record.account)
-}
-
-const resolveAvatarUrl = (record: SysUserVO) => {
-  return avatarPreviewMap[String(record.id)] || record.avatarUrl || ''
-}
-
-const createAvatarFallback = computed(() =>
-  getAvatarLetter(createForm.nickname || createForm.account || createForm.email),
-)
-
-const clearCreateAvatar = () => {
-  createAvatarPreview.value = ''
-  createAvatarFileName.value = ''
-}
-
-const handleCreateAvatarBeforeUpload = (file: File) => {
-  if (!file.type.startsWith('image/')) {
-    message.error('请上传图片文件')
-    return false
-  }
-
-  if (file.size > 5 * 1024 * 1024) {
-    message.error('头像图片不能超过 5MB')
-    return false
-  }
-
-  const reader = new FileReader()
-  reader.onload = () => {
-    createAvatarPreview.value = String(reader.result || '')
-    createAvatarFileName.value = file.name
-  }
-  reader.onerror = () => {
-    message.error('头像读取失败')
-  }
-  reader.readAsDataURL(file)
-  return false
-}
 
 const createRules: Record<string, Rule[]> = {
   account: [{ required: true, message: '请输入账号', trigger: 'blur' }],
@@ -322,34 +373,82 @@ watch(createMode, () => {
   createForm.email = ''
 })
 
-const editOpen = ref(false)
-const editFormRef = ref<FormInstance>()
-const editForm = reactive<Partial<SysUserVO>>({
-  id: undefined,
-  account: '',
-  email: '',
-  nickname: '',
-  avatarUrl: '',
-  userProfile: '',
-  status: 0,
+onBeforeUnmount(() => {
+  clearCreateAvatar()
 })
 
-const registerTypeText = (value?: number) => {
+function getAvatarLetter(value?: string) {
+  return (value?.trim().slice(0, 1) || 'U').toUpperCase()
+}
+
+function avatarFallback(record: Pick<SysUserVO, 'nickname' | 'account'>) {
+  return getAvatarLetter(record.nickname || record.account)
+}
+
+function roleText(userRole?: string) {
+  return userRole === 'admin' ? '管理员' : '普通用户'
+}
+
+function normalizeOptionalText(value?: string) {
+  const normalized = value?.trim()
+  return normalized ? normalized : undefined
+}
+
+function registerTypeText(value?: number) {
   if (value === 2) return '邮箱注册'
   if (value === 1) return '账号注册'
   return '-'
 }
 
-const loadUsers = async () => {
+function revokeBlobUrl(url?: string) {
+  if (url?.startsWith('blob:')) {
+    URL.revokeObjectURL(url)
+  }
+}
+
+function validateAvatarFile(file: File) {
+  if (!file.type.startsWith('image/')) {
+    message.error('请选择图片文件')
+    return false
+  }
+  if (file.size > AVATAR_SIZE_LIMIT) {
+    message.error('头像文件不能超过 5MB')
+    return false
+  }
+  return true
+}
+
+const handleCreateAvatarBeforeUpload: UploadProps['beforeUpload'] = (file) => {
+  const avatar = file as File
+  if (!validateAvatarFile(avatar)) {
+    return Upload.LIST_IGNORE
+  }
+  revokeBlobUrl(createAvatarPreview.value)
+  createAvatarFile.value = avatar
+  createAvatarPreview.value = URL.createObjectURL(avatar)
+  return false
+}
+
+function clearCreateAvatar() {
+  revokeBlobUrl(createAvatarPreview.value)
+  createAvatarFile.value = undefined
+  createAvatarPreview.value = ''
+}
+
+async function loadUsers() {
   listLoading.value = true
   try {
-    const res = await pageUsers({
+    const res = await getUserPage({
       pageNum: pagination.current,
       pageSize: pagination.pageSize,
     })
-    const page = res.data?.data
-    users.value = page?.records || []
-    pagination.total = page?.totalRow || 0
+    if (!isSuccessCode(res.code)) {
+      throw new Error(res.message || '加载用户列表失败')
+    }
+    users.value = Array.isArray(res.data?.records) ? res.data.records : []
+    pagination.total = Number(res.data?.totalRow || 0)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载用户列表失败')
   } finally {
     listLoading.value = false
   }
@@ -361,7 +460,11 @@ const handleTableChange: TableProps['onChange'] = (pag) => {
   void loadUsers()
 }
 
-const resetCreateForm = () => {
+function handleResetSearch() {
+  searchText.value = ''
+}
+
+function resetCreateForm() {
   createFormRef.value?.clearValidate()
   createMode.value = 'account'
   createForm.account = ''
@@ -373,52 +476,31 @@ const resetCreateForm = () => {
   clearCreateAvatar()
 }
 
-const openCreate = () => {
+function openCreate() {
   resetCreateForm()
   createOpen.value = true
 }
 
-const handleCreate = async () => {
+async function handleCreate() {
   await createFormRef.value?.validate()
   createLoading.value = true
   try {
-    const account = createForm.account ?? ''
-    const email = createForm.email ?? ''
     const payload: SysUserRegisterRequest = {
       password: createForm.password,
       confirmPassword: createForm.confirmPassword,
       nickname: createForm.nickname?.trim() || undefined,
       userProfile: createForm.userProfile?.trim() || undefined,
       ...(createMode.value === 'account'
-        ? { account: account.trim() }
-        : { email: email.trim() }),
+        ? { account: createForm.account?.trim() || undefined }
+        : { email: createForm.email?.trim() || undefined }),
     }
 
-    const res = await adminCreateUser(payload)
-    const code = Number(res.data?.code ?? -1)
-    if (!SUCCESS_CODES.has(code)) {
-      throw new Error(res.data?.message || '创建失败')
+    const res = await createUserByAdminWithAvatar(payload, createAvatarFile.value)
+    if (!isSuccessCode(res.code)) {
+      throw new Error(res.message || '创建失败')
     }
 
-    const createdUser = res.data?.data
-    if (createdUser?.id && createAvatarPreview.value) {
-      avatarPreviewMap[String(createdUser.id)] = createAvatarPreview.value
-      try {
-        const avatarRes = await updateUser(createdUser.id, {
-          avatarUrl: createAvatarPreview.value,
-        })
-        const avatarCode = Number(avatarRes.data?.code ?? -1)
-        if (!SUCCESS_CODES.has(avatarCode)) {
-          throw new Error(avatarRes.data?.message || '头像保存失败')
-        }
-      } catch (avatarError) {
-        message.warning(
-          avatarError instanceof Error ? avatarError.message : '头像保存失败，稍后可在编辑中补充',
-        )
-      }
-    }
-
-    message.success('创建成功')
+    message.success('用户创建成功')
     createOpen.value = false
     resetCreateForm()
     await loadUsers()
@@ -429,21 +511,45 @@ const handleCreate = async () => {
   }
 }
 
-const openEdit = (record: SysUserVO) => {
-  Object.assign(editForm, {
-    id: record.id,
-    account: record.account,
-    email: record.email,
-    nickname: record.nickname,
-    avatarUrl: record.avatarUrl,
-    userProfile: record.userProfile,
-    status: record.status ?? 0,
-  })
+async function openEdit(record: SysUserVO) {
+  if (!record.id) {
+    return
+  }
+
+  resetEditForm()
   editOpen.value = true
+  editDetailLoading.value = true
+
+  try {
+    const res = await getUserById(record.id)
+    if (!isSuccessCode(res.code) || !res.data) {
+      throw new Error(res.message || '获取用户详情失败')
+    }
+
+    editSnapshot.value = res.data
+    Object.assign(editForm, {
+      id: res.data.id,
+      account: res.data.account || '',
+      email: res.data.email || '',
+      nickname: res.data.nickname || '',
+      avatarUrl: res.data.avatarUrl || '',
+      userProfile: res.data.userProfile || '',
+      userRole: res.data.userRole || '',
+      registerType: res.data.registerType,
+      lastLoginTime: res.data.lastLoginTime || '',
+      status: res.data.status ?? 0,
+    })
+  } catch (error) {
+    editOpen.value = false
+    message.error(error instanceof Error ? error.message : '获取用户详情失败')
+  } finally {
+    editDetailLoading.value = false
+  }
 }
 
-const resetEditForm = () => {
+function resetEditForm() {
   editFormRef.value?.clearValidate()
+  editSnapshot.value = null
   Object.assign(editForm, {
     id: undefined,
     account: '',
@@ -451,53 +557,62 @@ const resetEditForm = () => {
     nickname: '',
     avatarUrl: '',
     userProfile: '',
+    userRole: '',
+    registerType: undefined,
+    lastLoginTime: '',
     status: 0,
   })
 }
 
-const handleEdit = async () => {
-  if (!editForm.id) {
+async function handleEdit() {
+  if (!editForm.id || !editSnapshot.value) {
     return
   }
 
-  editLoading.value = true
+  editSaving.value = true
   try {
+    const snapshot = editSnapshot.value
     const res = await updateUser(editForm.id, {
-      nickname: editForm.nickname,
-      avatarUrl: editForm.avatarUrl,
-      userProfile: editForm.userProfile,
-      status: editForm.status,
-      account: editForm.account,
-      email: editForm.email,
+      account: normalizeOptionalText(snapshot.account),
+      email: normalizeOptionalText(snapshot.email),
+      nickname: normalizeOptionalText(snapshot.nickname),
+      avatarUrl: normalizeOptionalText(snapshot.avatarUrl),
+      userProfile: normalizeOptionalText(snapshot.userProfile),
+      userRole: snapshot.userRole,
+      status: editForm.status ?? snapshot.status ?? 0,
     })
-    const code = Number(res.data?.code ?? -1)
-    if (!SUCCESS_CODES.has(code)) {
-      throw new Error(res.data?.message || '保存失败')
+
+    if (!isSuccessCode(res.code)) {
+      throw new Error(res.message || '保存失败')
     }
 
-    message.success('保存成功')
+    message.success('用户状态已更新')
     editOpen.value = false
     resetEditForm()
     await loadUsers()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '保存失败，请稍后重试')
   } finally {
-    editLoading.value = false
+    editSaving.value = false
   }
 }
 
-const handleDelete = (record: SysUserVO) => {
+function handleDelete(record: SysUserVO) {
+  if (!record.id) {
+    return
+  }
+
   Modal.confirm({
     title: '确认删除该用户？',
-    content: '此操作不可恢复。',
+    content: '删除后无法恢复，请确认当前操作。',
+    okText: '删除',
+    cancelText: '取消',
     async onOk() {
-      const res = await deleteUser(record.id)
-      const code = Number(res.data?.code ?? -1)
-      if (!SUCCESS_CODES.has(code)) {
-        throw new Error(res.data?.message || '删除失败')
+      const res = await deleteUser(record.id as number)
+      if (!isSuccessCode(res.code)) {
+        throw new Error(res.message || '删除失败')
       }
-      delete avatarPreviewMap[String(record.id)]
-      message.success('删除成功')
+      message.success('用户已删除')
       await loadUsers()
     },
   })
@@ -509,31 +624,121 @@ void loadUsers()
 <style scoped>
 .user-page {
   display: grid;
-  gap: 20px;
+  gap: 22px;
 }
 
-.toolbar-card,
+.hero-card,
 .table-card {
-  border-radius: 24px;
-  box-shadow: 0 18px 50px rgba(23, 42, 74, 0.08);
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 24px 70px rgba(24, 45, 79, 0.08);
 }
 
-.toolbar {
+.hero-card {
+  background:
+    radial-gradient(circle at 100% 0, rgba(31, 167, 199, 0.18), transparent 24%),
+    radial-gradient(circle at 0 100%, rgba(72, 134, 255, 0.12), transparent 22%),
+    linear-gradient(135deg, #fefefe 0%, #f5f9ff 100%);
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.95fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.hero-copy {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  gap: 14px;
 }
 
-.toolbar h2 {
+.hero-eyebrow {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(19, 127, 198, 0.08);
+  color: #177ea9;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-copy h2 {
   margin: 0;
-  font-size: 24px;
-  color: #132033;
+  color: #142137;
+  font-size: clamp(30px, 4vw, 42px);
+  line-height: 1.08;
+  letter-spacing: -0.05em;
 }
 
-.toolbar p {
-  margin: 8px 0 0;
-  color: #6f7f95;
+.hero-copy p {
+  margin: 0;
+  max-width: 640px;
+  color: #627289;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.hero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.stat-chip {
+  min-width: 150px;
+  padding: 16px 18px;
+  border: 1px solid rgba(26, 43, 69, 0.08);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+.stat-label {
+  display: block;
+  color: #72819a;
+  font-size: 12px;
+}
+
+.stat-chip strong {
+  display: block;
+  margin-top: 6px;
+  color: #18273f;
+  font-size: 26px;
+  font-weight: 800;
+}
+
+.hero-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+  padding: 22px;
+  border: 1px solid rgba(26, 43, 69, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 16px 40px rgba(24, 45, 79, 0.06);
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.table-card :deep(.ant-table-thead > tr > th) {
+  color: #4f6079;
+  font-weight: 700;
+  background: #f7faff;
+}
+
+.table-card :deep(.ant-table-tbody > tr:hover > td) {
+  background: #fbfdff;
 }
 
 .avatar-cell {
@@ -541,49 +746,86 @@ void loadUsers()
   justify-content: center;
 }
 
-.avatar-upload {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 16px;
-  border: 1px dashed rgba(60, 90, 128, 0.18);
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(243, 247, 252, 0.88), rgba(255, 255, 255, 0.96));
-}
-
-.avatar-upload-content {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.avatar-upload-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.upload-hint {
-  margin: 0;
-  color: #6f7f95;
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.file-name {
-  margin: 0;
-  color: #1e2d47;
-  font-size: 12px;
-  word-break: break-all;
-}
-
 .mode-switch {
   width: 100%;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   background: #f3f7fc;
   border-radius: 16px;
   padding: 6px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  background: #f7fbff;
+  border: 1px solid rgba(26, 43, 69, 0.07);
+}
+
+.meta-card span {
+  color: #72819a;
+  font-size: 12px;
+}
+
+.meta-card strong {
+  color: #18273f;
+  font-size: 16px;
+}
+
+.avatar-editor {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(26, 43, 69, 0.08);
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f6faff 100%);
+}
+
+.readonly-avatar {
+  background: linear-gradient(180deg, #fbfdff 0%, #f9fbff 100%);
+}
+
+.avatar-preview-card {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.preview-avatar {
+  flex-shrink: 0;
+  background: linear-gradient(145deg, #1fb7cf, #127fc6);
+}
+
+.preview-title {
+  color: #17253c;
+  font-weight: 700;
+}
+
+.avatar-preview-card p {
+  margin: 8px 0 0;
+  color: #718099;
+  line-height: 1.7;
+}
+
+.avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 :deep(.ant-segmented) {
@@ -600,10 +842,28 @@ void loadUsers()
   box-shadow: 0 8px 18px rgba(47, 86, 132, 0.12);
 }
 
-@media (max-width: 640px) {
-  .avatar-upload {
-    align-items: flex-start;
+@media (max-width: 980px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-actions {
     flex-direction: column;
+  }
+
+  .hero-actions :deep(.ant-btn) {
+    width: 100%;
+  }
+}
+
+@media (max-width: 720px) {
+  .form-grid,
+  .meta-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .avatar-preview-card {
+    align-items: flex-start;
   }
 }
 </style>

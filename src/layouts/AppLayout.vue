@@ -1,12 +1,13 @@
 <template>
   <a-layout class="app-layout">
     <a-layout-header class="app-header">
-      <div class="brand">
-        <div class="brand-mark">Y</div>
-        <div>
-          <div class="brand-name">YuAIGenerate</div>
+      <button class="brand" type="button" @click="router.push('/home')">
+        <img class="brand-logo" src="@/assets/logo.png" alt="一句话呈所想" />
+        <div class="brand-copy">
+          <span class="brand-title">一句话呈所想</span>
+          <span class="brand-subtitle">AI 对话式应用生成平台</span>
         </div>
-      </div>
+      </button>
 
       <a-menu
         v-model:selectedKeys="selectedKeys"
@@ -30,6 +31,7 @@
 
           <template #overlay>
             <a-menu @click="handleUserMenuClick">
+              <a-menu-item key="profile">个人中心</a-menu-item>
               <a-menu-item key="logout">退出登录</a-menu-item>
             </a-menu>
           </template>
@@ -50,29 +52,47 @@ import type { MenuProps } from 'ant-design-vue'
 import { Modal, message } from 'ant-design-vue'
 import { logoutUser } from '@/api/sysUserApi'
 import { useLoginUserStore } from '@/stores/loginUser'
+import { isAdminRole } from '@/utils/appUtils'
 
 const router = useRouter()
 const route = useRoute()
 const loginUserStore = useLoginUserStore()
 
-const selectedKeys = ref<string[]>([route.path])
+const selectedKeys = ref<string[]>(['/home'])
+
+function resolveMenuKey(path: string) {
+  if (path.startsWith('/apps/manage')) {
+    return '/apps/manage'
+  }
+  if (path.startsWith('/users')) {
+    return '/users'
+  }
+  if (path.startsWith('/home')) {
+    return '/home'
+  }
+  return ''
+}
 
 watch(
   () => route.path,
   (path) => {
-    selectedKeys.value = [path]
+    const menuKey = resolveMenuKey(path)
+    selectedKeys.value = menuKey ? [menuKey] : []
   },
   { immediate: true },
 )
 
-const isAdmin = computed(() => loginUserStore.loginUser?.userRole === 'admin')
-const displayName = computed(() => loginUserStore.loginUser?.nickname || loginUserStore.loginUser?.account || '用户')
-const avatarText = computed(() => (displayName.value?.slice(0, 1) || 'U').toUpperCase())
+const isAdmin = computed(() => isAdminRole(loginUserStore.loginUser?.userRole))
+const displayName = computed(
+  () => loginUserStore.loginUser?.nickname || loginUserStore.loginUser?.account || '用户',
+)
+const avatarText = computed(() => (displayName.value.slice(0, 1) || 'U').toUpperCase())
 const roleLabel = computed(() => (isAdmin.value ? '管理员' : '普通用户'))
 
 const menuItems = computed<MenuProps['items']>(() => {
-  const items: MenuProps['items'] = [{ key: '/home', label: '首页' }]
+  const items: NonNullable<MenuProps['items']> = [{ key: '/home', label: '首页' }]
   if (isAdmin.value) {
+    items.push({ key: '/apps/manage', label: '应用管理' })
     items.push({ key: '/users', label: '用户管理' })
   }
   return items
@@ -83,14 +103,19 @@ const handleMenuClick: MenuProps['onClick'] = (e) => {
 }
 
 const handleUserMenuClick: MenuProps['onClick'] = (e) => {
+  if (e.key === 'profile') {
+    router.push('/profile')
+    return
+  }
+
   if (e.key !== 'logout') {
     return
   }
 
   Modal.confirm({
     title: '确认退出登录？',
-    content: '退出后需要重新登录。',
-    okText: '退出',
+    content: '退出后需要重新登录才能继续生成和管理应用。',
+    okText: '退出登录',
     cancelText: '取消',
     async onOk() {
       try {
@@ -109,51 +134,62 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
 .app-layout {
   min-height: 100vh;
   background:
-    radial-gradient(circle at top right, rgba(41, 171, 225, 0.12), transparent 24%),
-    linear-gradient(180deg, #f6f9fd 0%, #edf3f9 100%);
+    radial-gradient(circle at 95% 6%, rgba(79, 198, 219, 0.2), transparent 18%),
+    radial-gradient(circle at 8% 88%, rgba(80, 159, 255, 0.15), transparent 18%),
+    linear-gradient(180deg, #f7fbff 0%, #edf4fb 100%);
 }
 
 .app-header {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  height: 72px;
+  height: 78px;
   padding: 0 28px;
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(18px);
-  border-bottom: 1px solid rgba(26, 43, 69, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(27, 39, 59, 0.08);
   box-sizing: border-box;
-  line-height: normal;
 }
 
 .brand {
-  flex: 0 0 260px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
 }
 
-.brand-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  color: white;
-  background: linear-gradient(145deg, #20bfd1, #178fd4);
-  box-shadow: 0 12px 24px rgba(29, 149, 196, 0.28);
+.brand-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 24px rgba(31, 167, 199, 0.16));
 }
 
-.brand-name {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1b273b;
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.brand-title {
+  color: #16233a;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.brand-subtitle {
+  color: #6d7c93;
+  font-size: 12px;
 }
 
 .nav-menu {
@@ -166,25 +202,24 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
 }
 
 .user-zone {
-  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  min-width: 0;
 }
 
 .user-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid rgba(26, 43, 69, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.74);
   cursor: pointer;
+  box-shadow: 0 12px 24px rgba(24, 45, 79, 0.06);
 }
 
 .avatar {
-  cursor: pointer;
   background: linear-gradient(145deg, #1fb7cf, #127fc6);
 }
 
@@ -197,7 +232,7 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
 
 .user-name {
   color: #1b273b;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .user-role {
@@ -212,7 +247,6 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
 :deep(.nav-menu.ant-menu-horizontal) {
   width: 100%;
   height: 100%;
-  line-height: normal;
   border-bottom: 0;
   align-items: center;
 }
@@ -225,13 +259,20 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
 :deep(.nav-menu .ant-menu-item) {
   display: flex;
   align-items: center;
-  height: 72px;
+  height: 78px;
   margin-top: 0;
   margin-bottom: 0;
+  color: #53627a;
+  font-weight: 600;
 }
 
-:deep(.nav-menu .ant-menu-title-content) {
-  line-height: 1;
+:deep(.nav-menu .ant-menu-item-selected) {
+  color: #158fb9;
+}
+
+:deep(.nav-menu .ant-menu-item-selected::after) {
+  border-bottom-width: 3px !important;
+  border-bottom-color: #20bfd1 !important;
 }
 
 @media (max-width: 960px) {
@@ -247,8 +288,8 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
     justify-content: flex-start;
   }
 
-  .brand {
-    flex: 1 1 auto;
+  .app-content {
+    padding: 18px;
   }
 }
 </style>

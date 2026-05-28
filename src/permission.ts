@@ -32,16 +32,15 @@ export function setupPermissionGuard(router: Router) {
     if (roles?.length) {
       const userRole = loginUserStore.loginUser?.userRole
       if (!userRole || !roles.includes(userRole)) {
-        message.warning('无权限访问该页面')
+        message.warning('当前账号无权访问该页面')
         return { path: '/home' }
       }
     }
 
     if (to.meta.title) {
-      document.title = `${to.meta.title} - YuAIGenerate`
+      document.title = `${to.meta.title} - 一句话呈所想`
     }
 
     return true
   })
 }
-

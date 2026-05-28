@@ -1,8 +1,8 @@
 <template>
-  <section class="auth-panel" :class="{ 'is-active': isActive }">
+  <section class="auth-panel">
     <div class="panel-head">
-      <h2>Create your account</h2>
-      <p>支持账号或邮箱注册，注册成功后自动返回登录页</p>
+      <h2>创建账号</h2>
+      <p>支持账号或邮箱注册，注册成功后自动跳转到登录页。</p>
     </div>
 
     <a-segmented v-model:value="mode" :options="modeOptions" class="mode-switch" />
@@ -66,8 +66,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import type { FormInstance, Rule } from 'ant-design-vue/es/form'
 import { registerUser, type SysUserRegisterRequest } from '@/api/sysUserApi'
@@ -75,12 +75,9 @@ import { registerUser, type SysUserRegisterRequest } from '@/api/sysUserApi'
 type RegisterMode = 'account' | 'email'
 
 const router = useRouter()
-const route = useRoute()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const mode = ref<RegisterMode>('account')
-
-const isActive = computed(() => route.name === 'register')
 
 const modeOptions = [
   { label: '账号注册', value: 'account' },
@@ -142,9 +139,9 @@ const handleSubmit = async () => {
     }
 
     const res = await registerUser(payload)
-    const code = res.data?.code
+    const code = res.code
     if (code !== 0 && code !== 20000) {
-      throw new Error(res.data?.message || '注册失败')
+      throw new Error(res.message || '注册失败')
     }
 
     message.success('注册成功，正在前往登录页')
