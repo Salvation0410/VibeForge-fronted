@@ -22,7 +22,7 @@
 
     <div class="workspace-grid">
       <a-card class="chat-panel" :bordered="false">
-        <div class="message-list">
+        <div ref="messageListRef" class="message-list">
           <div v-if="showHistoryToolbar" class="history-toolbar">
             <a-button
               v-if="hasMoreHistory"
@@ -102,17 +102,36 @@
           </a-space>
         </div>
 
-        <div class="preview-body">
+        <div class="preview-body" :class="{ 'is-streaming': showPreviewGeneratingOverlay }">
+          <div v-if="showPreviewGeneratingState" class="preview-state">
+            <div class="preview-spinner" />
+            <div class="preview-state-copy">
+              <h3>{{ previewStateTitle }}</h3>
+              <p>{{ previewStateDescription }}</p>
+            </div>
+          </div>
+
+          <template v-else-if="showPreview">
+            <iframe
+              :key="previewRenderKey"
+              class="preview-frame"
+              :src="previewUrl"
+              title="应用预览"
+            />
+            <div v-if="showPreviewGeneratingOverlay" class="preview-overlay">
+              <div class="preview-overlay-chip">
+                <div class="preview-spinner preview-spinner--small" />
+                <div>
+                  <strong>{{ previewStateTitle }}</strong>
+                  <p>{{ previewStateDescription }}</p>
+                </div>
+              </div>
+            </div>
+          </template>
+
           <a-empty
-            v-if="!showPreview"
-            description="当前对话还不足以展示网站，完成至少两条历史消息后会自动显示。"
-          />
-          <iframe
             v-else
-            :key="previewRenderKey"
-            class="preview-frame"
-            :src="previewUrl"
-            title="应用预览"
+            description="发送需求后，右侧将在当前轮生成完成后自动展示网站预览。"
           />
         </div>
       </a-card>
@@ -121,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
@@ -150,6 +169,7 @@ const appDetail = ref<AppVO | null>(null)
 const inputMessage = ref('')
 const messages = ref<ChatMessage[]>([])
 const historyRecords = ref<ChatHistory[]>([])
+const messageListRef = ref<HTMLElement | null>(null)
 const streaming = ref(false)
 const deploying = ref(false)
 const previewUrl = ref('')
@@ -184,6 +204,17 @@ const showEmptyState = computed(
     !messages.value.length &&
     !historyLoadingInitial.value &&
     !shouldAutoSendInitPrompt.value,
+)
+const hasGeneratedPreview = computed(() => showPreview.value && Boolean(previewUrl.value))
+const showPreviewGeneratingState = computed(() => streaming.value && !hasGeneratedPreview.value)
+const showPreviewGeneratingOverlay = computed(() => streaming.value && hasGeneratedPreview.value)
+const previewStateTitle = computed(() =>
+  autoSendingInitPrompt.value || !hasGeneratedPreview.value ? 'AI 正在生成首版页面' : 'AI 正在更新当前预览',
+)
+const previewStateDescription = computed(() =>
+  autoSendingInitPrompt.value || !hasGeneratedPreview.value
+    ? '正在根据当前需求整理代码与页面结构，等待本轮输出完成后会自动显示右侧预览。'
+    : '已保留上一版预览，新的修改正在生成中，当前轮输出完成后会自动刷新为最新结果。',
 )
 
 const statusText = computed(() => {
@@ -227,11 +258,22 @@ const updateMessageContent = (messageId: string, updater: (current: string) => s
   target.content = updater(target.content)
 }
 
+const scrollMessagesToBottom = async (behavior: ScrollBehavior = 'smooth') => {
+  await nextTick()
+  const container = messageListRef.value
+  if (!container) {
+    return
+  }
+
+  container.scrollTo({
+    top: container.scrollHeight,
+    behavior,
+  })
+}
+
 const finalizePreview = () => {
   previewUrl.value = buildLocalPreviewUrl(appDetail.value?.id, appDetail.value?.codeGenType)
-  showPreview.value =
-    Boolean(previewUrl.value) &&
-    (loadedHistoryCount.value >= 2 || (!streaming.value && messages.value.length >= 2))
+  showPreview.value = Boolean(previewUrl.value) && loadedHistoryCount.value >= 2
   previewRenderKey.value += 1
 }
 
@@ -487,6 +529,18 @@ onMounted(() => {
   void initializePage()
 })
 
+watch(
+  () => [
+    messages.value.length,
+    messages.value[messages.value.length - 1]?.content ?? '',
+    streaming.value,
+  ],
+  async (_, previousValue) => {
+    const nextBehavior = previousValue ? 'smooth' : 'auto'
+    await scrollMessagesToBottom(nextBehavior)
+  },
+)
+
 onBeforeUnmount(() => {
   closeStream()
 })
@@ -676,18 +730,146 @@ onBeforeUnmount(() => {
 }
 
 .preview-body {
+  position: relative;
   min-height: calc(100vh - 340px);
   border-radius: 24px;
   overflow: hidden;
-  background: linear-gradient(180deg, #f6f9fd, #ffffff);
+  background:
+    radial-gradient(circle at top, rgba(88, 179, 255, 0.14), transparent 45%),
+    linear-gradient(180deg, #f6f9fd, #ffffff);
   border: 1px solid rgba(26, 43, 69, 0.08);
 }
 
+.preview-body.is-streaming::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(244, 249, 255, 0.18), rgba(255, 255, 255, 0.08));
+  pointer-events: none;
+}
+
+.preview-state {
+  display: grid;
+  place-items: center;
+  gap: 22px;
+  min-height: calc(100vh - 340px);
+  padding: 32px;
+  text-align: center;
+}
+
+.preview-state-copy {
+  max-width: 420px;
+}
+
+.preview-state-copy h3 {
+  margin: 0 0 12px;
+  color: #142137;
+  font-size: 28px;
+}
+
+.preview-state-copy p {
+  margin: 0;
+  color: #68809d;
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.preview-spinner {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 180deg, rgba(31, 167, 199, 0.08), #22b8cf, #2f69ff, rgba(31, 167, 199, 0.08));
+  animation: spin 1.15s linear infinite;
+  box-shadow: 0 18px 40px rgba(47, 105, 255, 0.16);
+}
+
+.preview-spinner::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.preview-spinner::after {
+  content: '';
+  position: absolute;
+  inset: 22px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #21b7cc, #2f69ff);
+  opacity: 0.14;
+}
+
+.preview-spinner--small {
+  width: 30px;
+  height: 30px;
+  box-shadow: none;
+}
+
+.preview-spinner--small::before {
+  inset: 4px;
+}
+
+.preview-spinner--small::after {
+  inset: 10px;
+}
+
 .preview-frame {
+  display: block;
   width: 100%;
   min-height: calc(100vh - 340px);
   border: 0;
   background: white;
+}
+
+.preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(180deg, rgba(245, 249, 255, 0.68), rgba(245, 249, 255, 0.12));
+  pointer-events: none;
+}
+
+.preview-overlay-chip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: 460px;
+  padding: 16px 20px;
+  border: 1px solid rgba(46, 110, 255, 0.14);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 40px rgba(29, 61, 112, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.preview-overlay-chip strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #142137;
+  font-size: 15px;
+}
+
+.preview-overlay-chip p {
+  margin: 0;
+  color: #67809f;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1200px) {
@@ -710,6 +892,18 @@ onBeforeUnmount(() => {
 
   .message-meta {
     flex-direction: column;
+  }
+
+  .preview-state-copy h3 {
+    font-size: 22px;
+  }
+
+  .preview-overlay {
+    padding: 16px;
+  }
+
+  .preview-overlay-chip {
+    align-items: flex-start;
   }
 }
 </style>
