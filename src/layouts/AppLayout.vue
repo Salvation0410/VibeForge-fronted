@@ -64,6 +64,9 @@ function resolveMenuKey(path: string) {
   if (path.startsWith('/apps/manage')) {
     return '/apps/manage'
   }
+  if (path.startsWith('/chats/manage')) {
+    return '/chats/manage'
+  }
   if (path.startsWith('/users')) {
     return '/users'
   }
@@ -93,6 +96,7 @@ const menuItems = computed<MenuProps['items']>(() => {
   const items: NonNullable<MenuProps['items']> = [{ key: '/home', label: '首页' }]
   if (isAdmin.value) {
     items.push({ key: '/apps/manage', label: '应用管理' })
+    items.push({ key: '/chats/manage', label: '对话管理' })
     items.push({ key: '/users', label: '用户管理' })
   }
   return items

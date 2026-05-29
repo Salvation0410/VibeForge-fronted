@@ -11,7 +11,9 @@
 
       <div class="topbar-actions">
         <a-button @click="router.push('/home')">返回首页</a-button>
-        <a-button :disabled="!canOperate" @click="router.push(`/apps/${appId}/edit`)">编辑信息</a-button>
+        <a-button :disabled="!canOperate" @click="router.push(`/apps/${activeAppId}/edit`)">
+          编辑信息
+        </a-button>
         <a-button type="primary" :disabled="!canOperate" :loading="deploying" @click="handleDeploy">
           部署应用
         </a-button>
@@ -21,6 +23,23 @@
     <div class="workspace-grid">
       <a-card class="chat-panel" :bordered="false">
         <div class="message-list">
+          <div v-if="showHistoryToolbar" class="history-toolbar">
+            <a-button
+              v-if="hasMoreHistory"
+              type="link"
+              :loading="historyLoadingMore"
+              @click="loadMoreHistory"
+            >
+              加载更多历史消息
+            </a-button>
+            <span v-else-if="loadedHistoryCount > 0" class="history-tip">已经展示全部历史消息</span>
+          </div>
+
+          <a-empty
+            v-if="showEmptyState"
+            description="还没有对话记录，发送第一条消息开始生成应用。"
+          />
+
           <div
             v-for="messageItem in messages"
             :key="messageItem.id"
@@ -34,6 +53,7 @@
             <div class="message-bubble">
               <div class="message-meta">
                 <span>{{ messageItem.role === 'assistant' ? 'AI 回复' : '你的消息' }}</span>
+                <span>{{ formatDateTime(messageItem.createdAt) }}</span>
               </div>
               <pre class="message-content">{{ messageItem.content || ' ' }}</pre>
             </div>
@@ -54,7 +74,7 @@
             <span class="status-text">{{ statusText }}</span>
             <a-space>
               <a-button :disabled="streaming || !canOperate" @click="useOptimizePrompt">优化提示</a-button>
-              <a-button type="primary" :disabled="!canOperate" :loading="streaming" @click="sendMessage">
+              <a-button type="primary" :disabled="!canOperate" :loading="streaming" @click="sendMessage()">
                 发送消息
               </a-button>
             </a-space>
@@ -65,22 +85,27 @@
       <a-card class="preview-panel" :bordered="false">
         <div class="preview-header">
           <div>
-            <h2>生成后的网页展示</h2>
+            <h2>生成后的网站展示</h2>
             <p>
-              流式生成完成后，会自动展示本地预览。
-              <span v-if="deployedUrl">已部署到 <a :href="deployedUrl" target="_blank">{{ deployedUrl }}</a></span>
+              当应用已经产出可预览内容时，右侧会自动加载本地预览。
+              <span v-if="deployedUrl">
+                已部署到
+                <a :href="deployedUrl" target="_blank" rel="noreferrer">{{ deployedUrl }}</a>
+              </span>
             </p>
           </div>
           <a-space>
             <a-button :disabled="!previewUrl" @click="refreshPreview">刷新预览</a-button>
-            <a-button v-if="previewUrl" type="link" :href="previewUrl" target="_blank">新窗口打开</a-button>
+            <a-button v-if="previewUrl" type="link" :href="previewUrl" target="_blank" rel="noreferrer">
+              新窗口打开
+            </a-button>
           </a-space>
         </div>
 
         <div class="preview-body">
           <a-empty
             v-if="!showPreview"
-            description="等待 AI 完成网页生成，右侧会自动加载本地静态预览"
+            description="当前对话还不足以展示网站，完成至少两条历史消息后会自动显示。"
           />
           <iframe
             v-else
@@ -96,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
@@ -106,46 +131,72 @@ import {
   getAppDetail,
   type AppVO,
 } from '@/api/app'
+import { listAppChatHistory, type ChatHistory } from '@/api/chatHistory'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { canManageApp, canViewApp } from '@/utils/appAccess'
-import { buildLocalPreviewUrl, isSuccessCode } from '@/utils/appUtils'
+import { buildLocalPreviewUrl, formatDateTime, isSuccessCode } from '@/utils/appUtils'
+import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
 
-type ChatMessage = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-}
+const HISTORY_PAGE_SIZE = 10
 
 const router = useRouter()
 const route = useRoute()
 const loginUserStore = useLoginUserStore()
 const logoSrc = new URL('@/assets/logo.png', import.meta.url).href
-const appId = String(route.params.id || '') as AppId
+const routeAppId = String(route.params.id || '') as AppId
+const enteredFromCreate = ref(route.query.mode === 'create')
 
 const appDetail = ref<AppVO | null>(null)
 const inputMessage = ref('')
 const messages = ref<ChatMessage[]>([])
+const historyRecords = ref<ChatHistory[]>([])
 const streaming = ref(false)
 const deploying = ref(false)
 const previewUrl = ref('')
 const previewRenderKey = ref(0)
 const showPreview = ref(false)
 const deployedUrl = ref('')
+const historyCursor = ref<string>()
+const hasMoreHistory = ref(false)
+const historyLoadingInitial = ref(false)
+const historyLoadingMore = ref(false)
+const historyInitialized = ref(false)
+const loadedHistoryCount = ref(0)
+const autoSendingInitPrompt = ref(false)
 let currentEventSource: EventSource | null = null
 
+const activeAppId = computed(() => String(appDetail.value?.id || routeAppId))
 const canOperate = computed(() => canManageApp(loginUserStore.loginUser, appDetail.value))
+const hasInitPrompt = computed(() => Boolean(appDetail.value?.initPrompt?.trim()))
+const shouldAutoSendInitPrompt = computed(
+  () =>
+    enteredFromCreate.value &&
+    canOperate.value &&
+    hasInitPrompt.value &&
+    historyInitialized.value &&
+    loadedHistoryCount.value === 0 &&
+    !streaming.value,
+)
+const showHistoryToolbar = computed(() => historyInitialized.value && !enteredFromCreate.value)
+const showEmptyState = computed(
+  () =>
+    historyInitialized.value &&
+    !messages.value.length &&
+    !historyLoadingInitial.value &&
+    !shouldAutoSendInitPrompt.value,
+)
 
 const statusText = computed(() => {
   if (!canOperate.value) {
-    return '当前为只读查看模式，可浏览精选应用效果'
+    return '当前为只读查看模式，可浏览应用历史和预览效果。'
   }
   if (streaming.value) {
-    return 'AI 正在实时输出生成结果'
+    return autoSendingInitPrompt.value ? 'AI 正在根据你的需求启动首轮生成' : 'AI 正在实时输出生成结果'
   }
   if (showPreview.value) {
-    return '网页文件已准备好，可以继续微调'
+    return '网站预览已经准备好，可以继续微调需求。'
   }
-  return '等待你发送新的需求'
+  return '等待你发送新的需求。'
 })
 
 const appendMessage = (role: 'user' | 'assistant', content: string) => {
@@ -153,6 +204,7 @@ const appendMessage = (role: 'user' | 'assistant', content: string) => {
     id: `${role}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role,
     content,
+    createdAt: new Date().toISOString(),
   })
 }
 
@@ -161,6 +213,7 @@ const appendAssistantPlaceholder = () => {
     id: `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role: 'assistant',
     content: '',
+    createdAt: new Date().toISOString(),
   }
   messages.value.push(nextMessage)
   return nextMessage.id
@@ -174,36 +227,36 @@ const updateMessageContent = (messageId: string, updater: (current: string) => s
   target.content = updater(target.content)
 }
 
-const loadAppDetail = async () => {
-  if (!appId) {
-    message.error('应用 id 无效')
-    await router.replace('/home')
-    return
-  }
-
-  try {
-    const res = await getAppDetail(appId)
-    if (!isSuccessCode(res.code) || !res.data) {
-      throw new Error(res.message || '获取应用详情失败')
-    }
-    if (!canViewApp(loginUserStore.loginUser, res.data)) {
-      message.warning('当前无权查看该应用')
-      await router.replace('/home')
-      return
-    }
-
-    appDetail.value = res.data
-    previewUrl.value = buildLocalPreviewUrl(appDetail.value.id, appDetail.value.codeGenType)
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : '获取应用详情失败')
-    await router.replace('/home')
-  }
-}
-
 const finalizePreview = () => {
   previewUrl.value = buildLocalPreviewUrl(appDetail.value?.id, appDetail.value?.codeGenType)
-  showPreview.value = Boolean(previewUrl.value)
+  showPreview.value =
+    Boolean(previewUrl.value) &&
+    (loadedHistoryCount.value >= 2 || (!streaming.value && messages.value.length >= 2))
   previewRenderKey.value += 1
+}
+
+const resetHistoryState = () => {
+  historyRecords.value = []
+  messages.value = []
+  loadedHistoryCount.value = 0
+  historyCursor.value = undefined
+  hasMoreHistory.value = false
+  finalizePreview()
+}
+
+const rebuildMessagesFromHistory = (records: ChatHistory[]) => {
+  historyRecords.value = sortChatHistoryAsc(records)
+  messages.value = historyRecords.value.map(mapChatHistoryToMessage)
+  loadedHistoryCount.value = historyRecords.value.length
+  finalizePreview()
+}
+
+const mergeHistoryRecords = (currentRecords: ChatHistory[], nextRecords: ChatHistory[]) => {
+  const merged = new Map<string, ChatHistory>()
+  ;[...currentRecords, ...nextRecords].forEach((item) => {
+    merged.set(String(item.id || `${item.messageType || 'message'}-${item.createTime || ''}`), item)
+  })
+  return sortChatHistoryAsc(Array.from(merged.values()))
 }
 
 const closeStream = () => {
@@ -211,14 +264,104 @@ const closeStream = () => {
   currentEventSource = null
 }
 
-const sendMessage = async () => {
-  const content = inputMessage.value.trim()
+const loadAppDetail = async () => {
+  if (!routeAppId) {
+    message.error('应用 id 无效')
+    await router.replace('/home')
+    return false
+  }
+
+  try {
+    const res = await getAppDetail(routeAppId)
+    if (!isSuccessCode(res.code) || !res.data) {
+      throw new Error(res.message || '获取应用详情失败')
+    }
+    if (!canViewApp(loginUserStore.loginUser, res.data)) {
+      message.warning('当前无权查看该应用')
+      await router.replace('/home')
+      return false
+    }
+
+    appDetail.value = res.data
+    previewUrl.value = buildLocalPreviewUrl(appDetail.value.id, appDetail.value.codeGenType)
+    return true
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '获取应用详情失败')
+    await router.replace('/home')
+    return false
+  }
+}
+
+const loadHistoryPage = async (loadMore = false) => {
+  if (!appDetail.value?.id) {
+    return
+  }
+
+  if (loadMore) {
+    historyLoadingMore.value = true
+  } else {
+    historyLoadingInitial.value = true
+  }
+
+  try {
+    const res = await listAppChatHistory(String(appDetail.value.id), {
+      pageSize: HISTORY_PAGE_SIZE,
+      lastCreateTime: loadMore ? historyCursor.value : undefined,
+    })
+
+    if (!isSuccessCode(res.code)) {
+      throw new Error(res.message || '加载对话历史失败')
+    }
+
+    const pageRecords = Array.isArray(res.data?.records) ? res.data.records : []
+    const orderedPage = sortChatHistoryAsc(pageRecords)
+
+    if (loadMore) {
+      rebuildMessagesFromHistory(mergeHistoryRecords(historyRecords.value, orderedPage))
+    } else {
+      rebuildMessagesFromHistory(orderedPage)
+    }
+
+    historyCursor.value = orderedPage[0]?.createTime
+    hasMoreHistory.value = pageRecords.length >= HISTORY_PAGE_SIZE && Boolean(historyCursor.value)
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : '加载对话历史失败'
+
+    if (!loadMore && enteredFromCreate.value && loadedHistoryCount.value === 0) {
+      resetHistoryState()
+      return
+    }
+
+    message.error(errorMessage)
+  } finally {
+    if (!loadMore) {
+      historyInitialized.value = true
+    }
+    historyLoadingInitial.value = false
+    historyLoadingMore.value = false
+  }
+}
+
+const loadMoreHistory = async () => {
+  if (!hasMoreHistory.value || historyLoadingMore.value) {
+    return
+  }
+  await loadHistoryPage(true)
+}
+
+interface SendMessageOptions {
+  isAutoInit?: boolean
+  silentSuccess?: boolean
+}
+
+const sendMessage = async (presetContent?: string, options: SendMessageOptions = {}) => {
+  const content = (presetContent ?? inputMessage.value).trim()
   if (!content) {
     message.warning('请输入消息内容')
     return
   }
   if (!canOperate.value) {
-    message.warning('当前应用只支持查看，无法继续生成')
+    message.warning('当前应用仅支持查看，无法继续生成')
     return
   }
   if (streaming.value) {
@@ -226,35 +369,49 @@ const sendMessage = async () => {
   }
 
   appendMessage('user', content)
-  inputMessage.value = ''
+  if (!presetContent) {
+    inputMessage.value = ''
+  }
   streaming.value = true
+  autoSendingInitPrompt.value = Boolean(options.isAutoInit)
+  finalizePreview()
 
   const assistantMessageId = appendAssistantPlaceholder()
 
   closeStream()
 
   currentEventSource = chatToGenCodeStream({
-    appId,
+    appId: activeAppId.value,
     message: content,
     onMessage: (chunk) => {
       updateMessageContent(assistantMessageId, (current) => current + chunk)
     },
-    onDone: () => {
+    onDone: async () => {
       streaming.value = false
+      autoSendingInitPrompt.value = false
+      await loadAppDetail()
+      await loadHistoryPage(false)
       finalizePreview()
-      void loadAppDetail()
-      message.success('本轮生成完成，右侧已更新预览')
+      if (!options.silentSuccess) {
+        message.success('本轮生成完成，右侧预览已更新')
+      }
     },
     onError: () => {
       streaming.value = false
+      autoSendingInitPrompt.value = false
       const targetMessage = messages.value.find((item) => item.id === assistantMessageId)
       if (!targetMessage?.content.trim()) {
         updateMessageContent(
           assistantMessageId,
-          () => '生成过程中断，请稍后重试，或补充更明确的描述。',
+          () => '生成过程被中断，请稍后重试，或补充更明确的描述。',
         )
       }
-      message.error('生成过程异常中断')
+
+      if (options.isAutoInit) {
+        message.warning('首轮自动生成未完成，你可以继续在当前页面发送更具体的需求。')
+      } else {
+        message.error('生成过程异常中断')
+      }
     },
   })
 }
@@ -274,16 +431,16 @@ const refreshPreview = () => {
 }
 
 const handleDeploy = async () => {
-  if (!appId) {
+  if (!activeAppId.value) {
     return
   }
   if (!canOperate.value) {
-    message.warning('当前应用只支持查看，无法部署')
+    message.warning('当前应用仅支持查看，无法部署')
     return
   }
   deploying.value = true
   try {
-    const res = await deployApp(appId)
+    const res = await deployApp(activeAppId.value)
     if (!isSuccessCode(res.code) || !res.data) {
       throw new Error(res.message || '部署失败')
     }
@@ -297,28 +454,42 @@ const handleDeploy = async () => {
 }
 
 const useOptimizePrompt = () => {
-  inputMessage.value = '请在保留当前功能的基础上，优化排版层次、强调关键信息，并补全更完整的交互细节。'
+  inputMessage.value = '请在保留当前功能的基础上，优化排版层次、突出关键信息，并补全更完整的交互细节。'
 }
+
+const tryAutoSendInitPrompt = async () => {
+  if (!shouldAutoSendInitPrompt.value) {
+    return
+  }
+
+  await sendMessage(appDetail.value?.initPrompt?.trim(), {
+    isAutoInit: true,
+    silentSuccess: true,
+  })
+}
+
+const initializePage = async () => {
+  const loaded = await loadAppDetail()
+  if (!loaded) {
+    return
+  }
+
+  await loadHistoryPage(false)
+  await tryAutoSendInitPrompt()
+  finalizePreview()
+
+  if (route.query.mode === 'create') {
+    await router.replace(`/apps/${routeAppId}/chat`)
+  }
+}
+
+onMounted(() => {
+  void initializePage()
+})
 
 onBeforeUnmount(() => {
   closeStream()
 })
-
-void (async () => {
-  await loadAppDetail()
-  const autoStart = route.query.autoStart === '1'
-
-  if (autoStart && appDetail.value?.initPrompt) {
-    inputMessage.value = appDetail.value.initPrompt
-    await sendMessage()
-  } else if (appDetail.value?.initPrompt) {
-    appendMessage('user', appDetail.value.initPrompt)
-  }
-
-  if (previewUrl.value) {
-    showPreview.value = true
-  }
-})()
 </script>
 
 <style scoped>
@@ -398,6 +569,17 @@ void (async () => {
   max-height: calc(100vh - 390px);
   padding-right: 8px;
   overflow: auto;
+}
+
+.history-toolbar {
+  display: flex;
+  justify-content: center;
+  min-height: 32px;
+}
+
+.history-tip {
+  color: #7a8aa2;
+  font-size: 13px;
 }
 
 .message-row {
@@ -524,6 +706,10 @@ void (async () => {
 
   .workspace-title h1 {
     font-size: 26px;
+  }
+
+  .message-meta {
+    flex-direction: column;
   }
 }
 </style>

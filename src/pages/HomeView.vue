@@ -240,7 +240,7 @@ const handleCreateApp = async () => {
     }
     message.success('应用创建成功，正在进入生成页面')
     promptText.value = ''
-    await router.push(`/apps/${String(res.data)}/chat?autoStart=1`)
+    await router.push(`/apps/${String(res.data)}/chat?mode=create`)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '创建应用失败')
   } finally {

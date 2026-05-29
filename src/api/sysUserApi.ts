@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { AxiosResponse } from 'axios'
+import { apiTransformResponse } from '@/utils/http'
 
 export interface BaseResponse<T> {
   code: number
@@ -87,6 +88,7 @@ const userRequest = axios.create({
   baseURL: '/api',
   timeout: 30000,
   withCredentials: true,
+  transformResponse: apiTransformResponse,
 })
 
 function unwrapResponse<T>(response: AxiosResponse<BaseResponse<T>>): BaseResponse<T> {

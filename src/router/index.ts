@@ -7,6 +7,7 @@ import UserManageView from '@/pages/UserManageView.vue'
 import AppChatView from '@/pages/AppChatView.vue'
 import AppManageView from '@/pages/AppManageView.vue'
 import AppEditView from '@/pages/AppEditView.vue'
+import ChatManageView from '@/pages/ChatManageView.vue'
 import { setupPermissionGuard } from '@/permission'
 
 const router = createRouter({
@@ -68,6 +69,16 @@ const router = createRouter({
           component: AppManageView,
           meta: {
             title: '应用管理',
+            requiresAuth: true,
+            roles: ['admin'],
+          },
+        },
+        {
+          path: 'chats/manage',
+          name: 'chatManage',
+          component: ChatManageView,
+          meta: {
+            title: '对话管理',
             requiresAuth: true,
             roles: ['admin'],
           },
