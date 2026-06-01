@@ -4,6 +4,7 @@ import type { SysUserVO } from '@/api/sysUserApi'
 export const SUCCESS_CODES = new Set([0, 20000])
 export const DEFAULT_CODE_GEN_TYPE = 'multi_file'
 export const APP_PREVIEW_BASE_URL = 'http://localhost:8123/api/static'
+export const VUE_PROJECT_CODE_GEN_TYPE = 'vue_project'
 
 export function isSuccessCode(code?: number) {
   return SUCCESS_CODES.has(Number(code ?? -1))
@@ -25,7 +26,14 @@ export function buildLocalPreviewUrl(appId?: number | string, codeGenType?: stri
   if (!appId) {
     return ''
   }
-  return `${APP_PREVIEW_BASE_URL}/${codeGenType || DEFAULT_CODE_GEN_TYPE}_${appId}/`
+  const resolvedCodeGenType = codeGenType || DEFAULT_CODE_GEN_TYPE
+  const baseUrl = `${APP_PREVIEW_BASE_URL}/${resolvedCodeGenType}_${appId}/`
+
+  if (resolvedCodeGenType.toLowerCase() === VUE_PROJECT_CODE_GEN_TYPE) {
+    return `${baseUrl}dist/index.html`
+  }
+
+  return baseUrl
 }
 
 export function formatDateTime(value?: string) {

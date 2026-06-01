@@ -59,6 +59,24 @@ function unwrapResponse<T>(response: AxiosResponse<BaseResponse<T>>): BaseRespon
   return response.data
 }
 
+function buildDownloadFileNameFromDisposition(disposition?: string) {
+  if (!disposition) {
+    return ''
+  }
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+
+  const plainMatch = disposition.match(/filename="?([^"]+)"?/i)
+  return plainMatch?.[1] || ''
+}
+
 export function listAppChatHistory(
   appId: number | string,
   params?: ListAppChatHistoryParams,
@@ -76,9 +94,21 @@ export function listAllChatHistoryByPageForAdmin(
     .then(unwrapResponse)
 }
 
+export async function exportAppChatHistoryMarkdown(appId: number | string) {
+  const response = await chatHistoryRequest.get<Blob>(`/chatHistory/app/${appId}/export/markdown`, {
+    responseType: 'blob',
+  })
+
+  return {
+    blob: response.data,
+    fileName: buildDownloadFileNameFromDisposition(response.headers['content-disposition']),
+  }
+}
+
 const chatHistoryApi = {
   listAppChatHistory,
   listAllChatHistoryByPageForAdmin,
+  exportAppChatHistoryMarkdown,
 }
 
 export default chatHistoryApi

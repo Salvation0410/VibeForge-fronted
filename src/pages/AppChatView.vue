@@ -14,6 +14,9 @@
         <a-button :disabled="!canOperate" @click="router.push(`/apps/${activeAppId}/edit`)">
           编辑信息
         </a-button>
+        <a-button :disabled="!canOperate || streaming" :loading="exporting" @click="handleExportMarkdown">
+          导出 Markdown
+        </a-button>
         <a-button type="primary" :disabled="!canOperate" :loading="deploying" @click="handleDeploy">
           部署应用
         </a-button>
@@ -150,11 +153,12 @@ import {
   getAppDetail,
   type AppVO,
 } from '@/api/app'
-import { listAppChatHistory, type ChatHistory } from '@/api/chatHistory'
+import { exportAppChatHistoryMarkdown, listAppChatHistory, type ChatHistory } from '@/api/chatHistory'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { canManageApp, canViewApp } from '@/utils/appAccess'
 import { buildLocalPreviewUrl, formatDateTime, isSuccessCode } from '@/utils/appUtils'
 import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
+import { downloadBlobFile, sanitizeDownloadFileName } from '@/utils/download'
 
 const HISTORY_PAGE_SIZE = 10
 
@@ -172,6 +176,7 @@ const historyRecords = ref<ChatHistory[]>([])
 const messageListRef = ref<HTMLElement | null>(null)
 const streaming = ref(false)
 const deploying = ref(false)
+const exporting = ref(false)
 const previewUrl = ref('')
 const previewRenderKey = ref(0)
 const showPreview = ref(false)
@@ -492,6 +497,46 @@ const handleDeploy = async () => {
     message.error(error instanceof Error ? error.message : '部署失败')
   } finally {
     deploying.value = false
+  }
+}
+
+const handleExportMarkdown = async () => {
+  if (!activeAppId.value || !canOperate.value || streaming.value) {
+    return
+  }
+
+  exporting.value = true
+  try {
+    const { blob, fileName } = await exportAppChatHistoryMarkdown(activeAppId.value)
+    const resolvedName = sanitizeDownloadFileName(
+      fileName || `${appDetail.value?.appName || '应用'}-开发对话记录.md`,
+      '应用-开发对话记录.md',
+    )
+    downloadBlobFile(blob, resolvedName)
+    message.success('Markdown 已开始下载')
+  } catch (error: unknown) {
+    const axiosError = error as {
+      response?: {
+        data?: Blob
+      }
+      message?: string
+    }
+
+    let errorMessage = axiosError?.message || '导出失败，请稍后重试'
+
+    if (axiosError?.response?.data instanceof Blob) {
+      try {
+        const text = await axiosError.response.data.text()
+        const parsed = JSON.parse(text) as { message?: string }
+        errorMessage = parsed.message || errorMessage
+      } catch {
+        errorMessage = '导出失败，请稍后重试'
+      }
+    }
+
+    message.error(errorMessage)
+  } finally {
+    exporting.value = false
   }
 }
 
