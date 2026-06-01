@@ -5,17 +5,24 @@
         <img class="workspace-logo" src="@/assets/logo.png" alt="应用" />
         <div>
           <p class="eyebrow">应用生成工作台</p>
-          <h1>{{ appDetail?.appName || '应用生成中' }}</h1>
+          <div class="title-heading">
+            <h1>{{ appDetail?.appName || '应用生成中' }}</h1>
+            <a-tag color="cyan">{{ codeGenTypeLabel }}</a-tag>
+          </div>
         </div>
       </div>
 
       <div class="topbar-actions">
         <a-button @click="router.push('/home')">返回首页</a-button>
+        <a-button @click="detailVisible = true">应用详情</a-button>
         <a-button :disabled="!canOperate" @click="router.push(`/apps/${activeAppId}/edit`)">
           编辑信息
         </a-button>
         <a-button :disabled="!canOperate || streaming" :loading="exporting" @click="handleExportMarkdown">
           导出 Markdown
+        </a-button>
+        <a-button :disabled="!canOperate" :loading="downloadingCode" @click="handleDownloadCode">
+          下载代码
         </a-button>
         <a-button type="primary" :disabled="!canOperate" :loading="deploying" @click="handleDeploy">
           部署应用
@@ -66,6 +73,15 @@
         </div>
 
         <div class="composer">
+          <a-alert
+            v-if="selectedElementInfo"
+            class="selected-element-alert"
+            type="info"
+            show-icon
+            closable
+            :message="`已选中元素：${selectedElementSummary}`"
+            @close="clearSelectedElement"
+          />
           <a-textarea
             v-model:value="inputMessage"
             :auto-size="{ minRows: 3, maxRows: 6 }"
@@ -77,6 +93,14 @@
             <span class="status-text">{{ statusText }}</span>
             <a-space>
               <a-button :disabled="streaming || !canOperate" @click="useOptimizePrompt">优化提示</a-button>
+              <a-button
+                :type="visualEditMode ? 'primary' : 'default'"
+                :ghost="visualEditMode"
+                :disabled="!canVisualEdit"
+                @click="toggleVisualEditMode"
+              >
+                {{ visualEditMode ? '退出可视化编辑' : '可视化编辑' }}
+              </a-button>
               <a-button type="primary" :disabled="!canOperate" :loading="streaming" @click="sendMessage()">
                 发送消息
               </a-button>
@@ -116,12 +140,14 @@
 
           <template v-else-if="showPreview">
             <iframe
+              ref="previewFrameRef"
               :key="previewRenderKey"
               class="preview-frame"
               :src="previewUrl"
               title="应用预览"
+              @load="handlePreviewLoad"
             />
-            <div v-if="showPreviewGeneratingOverlay" class="preview-overlay">
+            <div v-if="showPreviewOverlay" class="preview-overlay">
               <div class="preview-overlay-chip">
                 <div class="preview-spinner preview-spinner--small" />
                 <div>
@@ -139,6 +165,35 @@
         </div>
       </a-card>
     </div>
+
+    <a-modal
+      v-model:open="detailVisible"
+      title="应用详情"
+      :footer="null"
+      width="720px"
+      destroy-on-close
+    >
+      <a-descriptions bordered :column="1" size="middle">
+        <a-descriptions-item label="应用名称">
+          {{ appDetail?.appName || '-' }}
+        </a-descriptions-item>
+        <a-descriptions-item label="生成类型">
+          {{ codeGenTypeLabel }}
+        </a-descriptions-item>
+        <a-descriptions-item label="应用 ID">
+          {{ appDetail?.id || '-' }}
+        </a-descriptions-item>
+        <a-descriptions-item label="创建时间">
+          {{ formatDateTime(appDetail?.createTime) }}
+        </a-descriptions-item>
+        <a-descriptions-item label="更新时间">
+          {{ formatDateTime(appDetail?.updateTime) }}
+        </a-descriptions-item>
+        <a-descriptions-item label="初始提示词">
+          <div class="detail-prompt">{{ appDetail?.initPrompt || '-' }}</div>
+        </a-descriptions-item>
+      </a-descriptions>
+    </a-modal>
   </section>
 </template>
 
@@ -150,6 +205,7 @@ import {
   type AppId,
   chatToGenCodeStream,
   deployApp,
+  downloadAppCode,
   getAppDetail,
   type AppVO,
 } from '@/api/app'
@@ -158,7 +214,17 @@ import { useLoginUserStore } from '@/stores/loginUser'
 import { canManageApp, canViewApp } from '@/utils/appAccess'
 import { buildLocalPreviewUrl, formatDateTime, isSuccessCode } from '@/utils/appUtils'
 import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
-import { downloadBlobFile, sanitizeDownloadFileName } from '@/utils/download'
+import {
+  downloadBlobFile,
+  getFileNameFromContentDisposition,
+  sanitizeDownloadFileName,
+} from '@/utils/download'
+import {
+  buildVisualEditPrompt,
+  createVisualEditor,
+  formatSelectedElementInfo,
+  type VisualEditorSelectedElement,
+} from '@/utils/visualEditor'
 
 const HISTORY_PAGE_SIZE = 10
 
@@ -174,12 +240,18 @@ const inputMessage = ref('')
 const messages = ref<ChatMessage[]>([])
 const historyRecords = ref<ChatHistory[]>([])
 const messageListRef = ref<HTMLElement | null>(null)
+const previewFrameRef = ref<HTMLIFrameElement | null>(null)
 const streaming = ref(false)
 const deploying = ref(false)
 const exporting = ref(false)
+const downloadingCode = ref(false)
+const detailVisible = ref(false)
+const visualEditMode = ref(false)
+const selectedElementInfo = ref<VisualEditorSelectedElement | null>(null)
 const previewUrl = ref('')
 const previewRenderKey = ref(0)
 const showPreview = ref(false)
+const previewLoading = ref(false)
 const deployedUrl = ref('')
 const historyCursor = ref<string>()
 const hasMoreHistory = ref(false)
@@ -189,10 +261,22 @@ const historyInitialized = ref(false)
 const loadedHistoryCount = ref(0)
 const autoSendingInitPrompt = ref(false)
 let currentEventSource: EventSource | null = null
+const visualEditor = createVisualEditor({
+  onSelect: (payload) => {
+    selectedElementInfo.value = payload
+  },
+})
 
 const activeAppId = computed(() => String(appDetail.value?.id || routeAppId))
+const codeGenTypeLabel = computed(() => (appDetail.value?.codeGenType || 'web').toUpperCase())
 const canOperate = computed(() => canManageApp(loginUserStore.loginUser, appDetail.value))
+const canVisualEdit = computed(
+  () => canOperate.value && showPreview.value && !streaming.value && !previewLoading.value,
+)
 const hasInitPrompt = computed(() => Boolean(appDetail.value?.initPrompt?.trim()))
+const selectedElementSummary = computed(() =>
+  selectedElementInfo.value ? formatSelectedElementInfo(selectedElementInfo.value) : '',
+)
 const shouldAutoSendInitPrompt = computed(
   () =>
     enteredFromCreate.value &&
@@ -213,13 +297,20 @@ const showEmptyState = computed(
 const hasGeneratedPreview = computed(() => showPreview.value && Boolean(previewUrl.value))
 const showPreviewGeneratingState = computed(() => streaming.value && !hasGeneratedPreview.value)
 const showPreviewGeneratingOverlay = computed(() => streaming.value && hasGeneratedPreview.value)
+const showPreviewOverlay = computed(() => showPreviewGeneratingOverlay.value || previewLoading.value)
 const previewStateTitle = computed(() =>
-  autoSendingInitPrompt.value || !hasGeneratedPreview.value ? 'AI 正在生成首版页面' : 'AI 正在更新当前预览',
+  previewLoading.value
+    ? '预览资源加载中'
+    : autoSendingInitPrompt.value || !hasGeneratedPreview.value
+      ? 'AI 正在生成首版页面'
+      : 'AI 正在更新当前预览',
 )
 const previewStateDescription = computed(() =>
-  autoSendingInitPrompt.value || !hasGeneratedPreview.value
-    ? '正在根据当前需求整理代码与页面结构，等待本轮输出完成后会自动显示右侧预览。'
-    : '已保留上一版预览，新的修改正在生成中，当前轮输出完成后会自动刷新为最新结果。',
+  previewLoading.value
+    ? '后端正在准备最新的构建产物，加载完成后右侧会自动展示页面预览。'
+    : autoSendingInitPrompt.value || !hasGeneratedPreview.value
+      ? '正在根据当前需求整理代码与页面结构，等待本轮输出完成后会自动显示右侧预览。'
+      : '已保留上一版预览，新的修改正在生成中，当前轮输出完成后会自动刷新为最新结果。',
 )
 
 const statusText = computed(() => {
@@ -276,10 +367,45 @@ const scrollMessagesToBottom = async (behavior: ScrollBehavior = 'smooth') => {
   })
 }
 
+const clearSelectedElement = () => {
+  selectedElementInfo.value = null
+}
+
+const exitVisualEditMode = () => {
+  visualEditMode.value = false
+  visualEditor.disable()
+  clearSelectedElement()
+}
+
+const toggleVisualEditMode = () => {
+  if (visualEditMode.value) {
+    exitVisualEditMode()
+    return
+  }
+
+  if (!canVisualEdit.value) {
+    message.warning('当前预览尚未准备完成，暂时无法进入可视化编辑')
+    return
+  }
+
+  visualEditMode.value = true
+  clearSelectedElement()
+  visualEditor.enable(previewFrameRef.value)
+  message.success('已进入可视化编辑模式，请到右侧预览区域选择元素')
+}
+
 const finalizePreview = () => {
+  if (visualEditMode.value) {
+    visualEditor.attachToIframe(null)
+  }
   previewUrl.value = buildLocalPreviewUrl(appDetail.value?.id, appDetail.value?.codeGenType)
   showPreview.value = Boolean(previewUrl.value) && loadedHistoryCount.value >= 2
+  previewLoading.value = showPreview.value
   previewRenderKey.value += 1
+
+  if (!showPreview.value && visualEditMode.value) {
+    exitVisualEditMode()
+  }
 }
 
 const resetHistoryState = () => {
@@ -402,8 +528,8 @@ interface SendMessageOptions {
 }
 
 const sendMessage = async (presetContent?: string, options: SendMessageOptions = {}) => {
-  const content = (presetContent ?? inputMessage.value).trim()
-  if (!content) {
+  const rawContent = (presetContent ?? inputMessage.value).trim()
+  if (!rawContent) {
     message.warning('请输入消息内容')
     return
   }
@@ -415,10 +541,13 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
     return
   }
 
-  appendMessage('user', content)
+  const content = buildVisualEditPrompt(rawContent, selectedElementInfo.value)
+
+  appendMessage('user', rawContent)
   if (!presetContent) {
     inputMessage.value = ''
   }
+  exitVisualEditMode()
   streaming.value = true
   autoSendingInitPrompt.value = Boolean(options.isAutoInit)
   finalizePreview()
@@ -474,7 +603,18 @@ const refreshPreview = () => {
   if (!previewUrl.value) {
     return
   }
+  if (visualEditMode.value) {
+    visualEditor.attachToIframe(null)
+  }
+  previewLoading.value = true
   previewRenderKey.value += 1
+}
+
+const handlePreviewLoad = () => {
+  previewLoading.value = false
+  if (visualEditMode.value) {
+    visualEditor.attachToIframe(previewFrameRef.value)
+  }
 }
 
 const handleDeploy = async () => {
@@ -497,6 +637,46 @@ const handleDeploy = async () => {
     message.error(error instanceof Error ? error.message : '部署失败')
   } finally {
     deploying.value = false
+  }
+}
+
+const handleDownloadCode = async () => {
+  if (!activeAppId.value || !canOperate.value) {
+    return
+  }
+
+  downloadingCode.value = true
+  try {
+    const response = await downloadAppCode(activeAppId.value)
+    const fileName = getFileNameFromContentDisposition(
+      response.headers['content-disposition'],
+      sanitizeDownloadFileName(`${appDetail.value?.appName || '应用'}-源码.zip`, '应用-源码.zip'),
+    )
+    downloadBlobFile(response.data, fileName)
+    message.success('代码压缩包已开始下载')
+  } catch (error: unknown) {
+    const axiosError = error as {
+      response?: {
+        data?: Blob
+      }
+      message?: string
+    }
+
+    let errorMessage = axiosError?.message || '下载代码失败，请稍后重试'
+
+    if (axiosError?.response?.data instanceof Blob) {
+      try {
+        const text = await axiosError.response.data.text()
+        const parsed = JSON.parse(text) as { message?: string }
+        errorMessage = parsed.message || errorMessage
+      } catch {
+        errorMessage = '下载代码失败，请稍后重试'
+      }
+    }
+
+    message.error(errorMessage)
+  } finally {
+    downloadingCode.value = false
   }
 }
 
@@ -586,8 +766,15 @@ watch(
   },
 )
 
+watch(canVisualEdit, (value) => {
+  if (!value && visualEditMode.value) {
+    exitVisualEditMode()
+  }
+})
+
 onBeforeUnmount(() => {
   closeStream()
+  visualEditor.destroy()
 })
 </script>
 
@@ -614,6 +801,13 @@ onBeforeUnmount(() => {
   gap: 16px;
 }
 
+.title-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
 .workspace-logo {
   width: 44px;
   height: 44px;
@@ -633,6 +827,12 @@ onBeforeUnmount(() => {
   margin: 0;
   color: #132033;
   font-size: 32px;
+}
+
+.detail-prompt {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.75;
 }
 
 .topbar-actions {
@@ -740,6 +940,10 @@ onBeforeUnmount(() => {
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid rgba(26, 43, 69, 0.08);
+}
+
+.selected-element-alert {
+  margin-bottom: 14px;
 }
 
 .composer-actions {

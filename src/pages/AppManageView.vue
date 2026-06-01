@@ -40,13 +40,11 @@
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'cover'">
             <a-image
-              v-if="record.cover"
-              :src="record.cover"
+              :src="getAppCoverUrl(record)"
               :width="92"
               :height="56"
               style="object-fit: cover; border-radius: 12px"
             />
-            <span v-else>-</span>
           </template>
 
           <template v-else-if="column.key === 'priority'">
@@ -103,7 +101,7 @@ import {
   type AppQueryRequest,
   type AppVO,
 } from '@/api/app'
-import { formatDateTime, getAppOwnerName, isSuccessCode } from '@/utils/appUtils'
+import { formatDateTime, getAppCoverUrl, getAppOwnerName, isSuccessCode } from '@/utils/appUtils'
 
 const router = useRouter()
 const loading = ref(false)

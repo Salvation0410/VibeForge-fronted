@@ -1,7 +1,7 @@
 <template>
   <article class="app-card" @click="handleCardClick">
     <div class="preview-shell">
-      <img v-if="app.cover" class="preview-image" :src="app.cover" :alt="app.appName || '应用封面'" />
+      <img v-if="hasRealCover" class="preview-image" :src="coverUrl" :alt="app.appName || '应用封面'" />
       <div v-else class="preview-fallback">
         <span class="preview-badge">{{ previewBadge }}</span>
         <strong>{{ app.appName || '未命名应用' }}</strong>
@@ -37,6 +37,7 @@ import { computed } from 'vue'
 import type { AppVO } from '@/api/app'
 import {
   formatRelativeTime,
+  getAppCoverUrl,
   getAppOwnerAvatar,
   getAppOwnerName,
   getAppTagColor,
@@ -58,6 +59,8 @@ const emit = defineEmits<{
 
 const ownerName = computed(() => getAppOwnerName(props.app))
 const ownerAvatar = computed(() => getAppOwnerAvatar(props.app))
+const coverUrl = computed(() => getAppCoverUrl(props.app))
+const hasRealCover = computed(() => Boolean(props.app.cover?.trim()))
 const ownerInitial = computed(() => ownerName.value.slice(0, 1).toUpperCase())
 const createdText = computed(() => `创建于 ${formatRelativeTime(props.app.createTime)}`)
 const tagColor = computed(() => getAppTagColor(props.app.priority))

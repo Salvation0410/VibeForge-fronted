@@ -172,6 +172,12 @@ export function deployApp(appId: AppId): Promise<BaseResponse<string>> {
   return appRequest.post<BaseResponse<string>>('/apps/deploy', payload).then(unwrapResponse)
 }
 
+export function downloadAppCode(appId: AppId): Promise<AxiosResponse<Blob>> {
+  return appRequest.get<Blob>(`/apps/download/${appId}`, {
+    responseType: 'blob',
+  })
+}
+
 /**
  * SSE code generation.
  *
@@ -225,6 +231,7 @@ const appApi = {
   getAppPageByAdmin,
   getAppDetailByAdmin,
   deployApp,
+  downloadAppCode,
   chatToGenCodeStream,
 }
 
