@@ -295,7 +295,9 @@ const filteredUsers = computed(() => {
     return users.value
   }
   return users.value.filter((item) =>
-    [item.account, item.email, item.nickname].some((value) => value?.toLowerCase().includes(keyword)),
+    [item.account, item.email, item.nickname].some((value) =>
+      value?.toLowerCase().includes(keyword),
+    ),
   )
 })
 

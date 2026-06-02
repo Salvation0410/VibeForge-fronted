@@ -38,7 +38,7 @@ export function setupPermissionGuard(router: Router) {
     }
 
     if (to.meta.title) {
-      document.title = `${to.meta.title} - 一句话呈所想`
+      document.title = `${to.meta.title} - 智创 · AI应用平台`
     }
 
     return true

@@ -21,7 +21,11 @@
             allow-clear
           />
           <a-input-number v-model:value="query.userId" placeholder="用户 id" style="width: 140px" />
-          <a-input-number v-model:value="query.priority" placeholder="优先级" style="width: 140px" />
+          <a-input-number
+            v-model:value="query.priority"
+            placeholder="优先级"
+            style="width: 140px"
+          />
           <a-button type="primary" @click="handleSearch">搜索</a-button>
           <a-button @click="resetSearch">重置</a-button>
         </a-space>

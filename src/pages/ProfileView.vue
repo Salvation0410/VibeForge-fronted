@@ -23,9 +23,7 @@
             </div>
           </div>
 
-          <p class="hero-desc">
-            这里集中管理你的公开资料，并快速回到自己创建过的应用。
-          </p>
+          <p class="hero-desc">这里集中管理你的公开资料，并快速回到自己创建过的应用。</p>
 
           <div class="stat-grid">
             <div class="stat-card">
@@ -75,7 +73,10 @@
               </a-form-item>
 
               <a-form-item name="nickname" label="昵称">
-                <a-input v-model:value="profileForm.nickname" placeholder="给自己一个更好识别的名字" />
+                <a-input
+                  v-model:value="profileForm.nickname"
+                  placeholder="给自己一个更好识别的名字"
+                />
               </a-form-item>
             </div>
 
@@ -194,11 +195,7 @@ import type { UploadProps } from 'ant-design-vue'
 import type { FormInstance, Rule } from 'ant-design-vue/es/form'
 import { Upload, message } from 'ant-design-vue'
 import AppCard from '@/components/AppCard.vue'
-import {
-  getMyAppPage,
-  type AppQueryRequest,
-  type AppVO,
-} from '@/api/app'
+import { getMyAppPage, type AppQueryRequest, type AppVO } from '@/api/app'
 import {
   getLoginUserDetail,
   updateUserWithAvatar,

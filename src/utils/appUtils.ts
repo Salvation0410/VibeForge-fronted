@@ -1,5 +1,6 @@
 import type { AppVO } from '@/api/app'
 import type { SysUserVO } from '@/api/sysUserApi'
+import defaultCoverImage from '@/assets/coverImage.png'
 
 export const SUCCESS_CODES = new Set([0, 20000])
 export const DEFAULT_CODE_GEN_TYPE = 'multi_file'
@@ -103,56 +104,11 @@ export function getAppTagColor(priority?: number) {
   return 'default'
 }
 
-function encodeSvgDataUri(svg: string) {
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`
-}
-
-function getCoverTitle(app?: AppVO) {
-  const name = app?.appName?.trim()
-  if (!name) {
-    return 'AI App'
-  }
-  return name.length > 24 ? `${name.slice(0, 24)}...` : name
-}
-
-function getCoverType(app?: AppVO) {
-  return (app?.codeGenType || DEFAULT_CODE_GEN_TYPE).replace(/_/g, ' ').toUpperCase()
-}
-
 export function getAppCoverUrl(app?: AppVO) {
   const cover = app?.cover?.trim()
   if (cover) {
     return cover
   }
 
-  const title = getCoverTitle(app)
-  const type = getCoverType(app)
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000">
-      <defs>
-        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#eff8ff" />
-          <stop offset="55%" stop-color="#ffffff" />
-          <stop offset="100%" stop-color="#e7f5ff" />
-        </linearGradient>
-        <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#22b8cf" />
-          <stop offset="100%" stop-color="#2f69ff" />
-        </linearGradient>
-      </defs>
-      <rect width="1600" height="1000" rx="48" fill="url(#bg)" />
-      <circle cx="1310" cy="190" r="210" fill="#d9f4ff" />
-      <circle cx="180" cy="860" r="240" fill="#edf4ff" />
-      <rect x="118" y="118" width="248" height="52" rx="26" fill="#ffffff" opacity="0.9" />
-      <text x="242" y="152" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="700" fill="#1484b1">${type}</text>
-      <text x="118" y="700" font-family="Arial, sans-serif" font-size="92" font-weight="700" fill="#132033">${title}</text>
-      <text x="118" y="782" font-family="Arial, sans-serif" font-size="34" fill="#5f6f88">Deploy later, preview now.</text>
-      <rect x="118" y="840" width="460" height="16" rx="8" fill="url(#accent)" opacity="0.92" />
-      <rect x="1180" y="620" width="250" height="250" rx="56" fill="url(#accent)" opacity="0.18" />
-      <rect x="1100" y="540" width="250" height="250" rx="56" fill="#ffffff" opacity="0.72" />
-      <rect x="1020" y="460" width="250" height="250" rx="56" fill="url(#accent)" opacity="0.12" />
-    </svg>
-  `
-
-  return encodeSvgDataUri(svg)
+  return defaultCoverImage
 }

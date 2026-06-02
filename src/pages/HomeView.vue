@@ -2,9 +2,9 @@
   <section class="home-page">
     <div class="hero">
       <div class="hero-copy">
-        <img class="hero-logo" src="@/assets/logo.png" alt="一句话呈所想" />
-        <h1>一句话呈所想</h1>
-        <p>与 AI 对话，轻松创建应用和网站</p>
+        <img class="hero-logo" src="@/assets/logo.png" alt="智创 · AI应用平台" />
+        <h1>智创 · AI应用平台</h1>
+        <p>AI 驱动应用创新，快速构建业务价值</p>
       </div>
 
       <a-card class="prompt-card" :bordered="false">
@@ -59,7 +59,13 @@
       <a-spin :spinning="myLoading">
         <a-empty v-if="!myApps.length" description="你还没有创建应用，试试上方提示词输入框" />
         <div v-else class="card-grid">
-          <AppCard v-for="app in myApps" :key="app.id" :app="app" show-actions @click="goToChat(app)">
+          <AppCard
+            v-for="app in myApps"
+            :key="app.id"
+            :app="app"
+            show-actions
+            @click="goToChat(app)"
+          >
             <template #actions>
               <a-button type="link" @click="goToChat(app)">继续生成</a-button>
               <a-button type="link" @click="goToEdit(app)">编辑</a-button>
@@ -146,12 +152,7 @@ import { buildAppNameFromPrompt, DEFAULT_CODE_GEN_TYPE, isSuccessCode } from '@/
 
 const router = useRouter()
 
-const promptExamples = [
-  '波普风电商页面',
-  '企业网站',
-  '电商运营后台',
-  '暗黑话题社区',
-]
+const promptExamples = ['波普风电商页面', '企业网站', '电商运营后台', '暗黑话题社区']
 
 const promptText = ref('')
 const creating = ref(false)

@@ -18,7 +18,11 @@
         <a-button :disabled="!canOperate" @click="router.push(`/apps/${activeAppId}/edit`)">
           编辑信息
         </a-button>
-        <a-button :disabled="!canOperate || streaming" :loading="exporting" @click="handleExportMarkdown">
+        <a-button
+          :disabled="!canOperate || streaming"
+          :loading="exporting"
+          @click="handleExportMarkdown"
+        >
           导出 Markdown
         </a-button>
         <a-button :disabled="!canOperate" :loading="downloadingCode" @click="handleDownloadCode">
@@ -30,7 +34,12 @@
       </div>
     </header>
 
-    <div class="workspace-grid">
+    <div
+      ref="workspaceGridRef"
+      class="workspace-grid"
+      :class="{ 'is-resizing': isResizingPanels }"
+      :style="workspaceGridStyle"
+    >
       <a-card class="chat-panel" :bordered="false">
         <div ref="messageListRef" class="message-list">
           <div v-if="showHistoryToolbar" class="history-toolbar">
@@ -92,7 +101,9 @@
           <div class="composer-actions">
             <span class="status-text">{{ statusText }}</span>
             <a-space>
-              <a-button :disabled="streaming || !canOperate" @click="useOptimizePrompt">优化提示</a-button>
+              <a-button :disabled="streaming || !canOperate" @click="useOptimizePrompt"
+                >优化提示</a-button
+              >
               <a-button
                 :type="visualEditMode ? 'primary' : 'default'"
                 :ghost="visualEditMode"
@@ -101,13 +112,31 @@
               >
                 {{ visualEditMode ? '退出可视化编辑' : '可视化编辑' }}
               </a-button>
-              <a-button type="primary" :disabled="!canOperate" :loading="streaming" @click="sendMessage()">
+              <a-button
+                type="primary"
+                :disabled="!canOperate"
+                :loading="streaming"
+                @click="sendMessage()"
+              >
                 发送消息
               </a-button>
             </a-space>
           </div>
         </div>
       </a-card>
+
+      <div
+        v-if="showResizableSplit"
+        class="resize-handle"
+        role="separator"
+        aria-label="调整聊天区和预览区宽度"
+        aria-orientation="vertical"
+        tabindex="0"
+        @pointerdown="startResizePanels"
+        @keydown="handleResizeHandleKeydown"
+      >
+        <span class="resize-handle__line" />
+      </div>
 
       <a-card class="preview-panel" :bordered="false">
         <div class="preview-header">
@@ -123,7 +152,13 @@
           </div>
           <a-space>
             <a-button :disabled="!previewUrl" @click="refreshPreview">刷新预览</a-button>
-            <a-button v-if="previewUrl" type="link" :href="previewUrl" target="_blank" rel="noreferrer">
+            <a-button
+              v-if="previewUrl"
+              type="link"
+              :href="previewUrl"
+              target="_blank"
+              rel="noreferrer"
+            >
               新窗口打开
             </a-button>
           </a-space>
@@ -143,7 +178,7 @@
               ref="previewFrameRef"
               :key="previewRenderKey"
               class="preview-frame"
-              :src="previewUrl"
+              :srcdoc="previewSrcDoc"
               title="应用预览"
               @load="handlePreviewLoad"
             />
@@ -158,10 +193,7 @@
             </div>
           </template>
 
-          <a-empty
-            v-else
-            description="发送需求后，右侧将在当前轮生成完成后自动展示网站预览。"
-          />
+          <a-empty v-else description="发送需求后，右侧将在当前轮生成完成后自动展示网站预览。" />
         </div>
       </a-card>
     </div>
@@ -209,7 +241,11 @@ import {
   getAppDetail,
   type AppVO,
 } from '@/api/app'
-import { exportAppChatHistoryMarkdown, listAppChatHistory, type ChatHistory } from '@/api/chatHistory'
+import {
+  exportAppChatHistoryMarkdown,
+  listAppChatHistory,
+  type ChatHistory,
+} from '@/api/chatHistory'
 import { useLoginUserStore } from '@/stores/loginUser'
 import { canManageApp, canViewApp } from '@/utils/appAccess'
 import { buildLocalPreviewUrl, formatDateTime, isSuccessCode } from '@/utils/appUtils'
@@ -227,6 +263,10 @@ import {
 } from '@/utils/visualEditor'
 
 const HISTORY_PAGE_SIZE = 10
+const DESKTOP_SPLIT_BREAKPOINT = 1200
+const RESIZE_HANDLE_WIDTH = 16
+const MIN_PANEL_RATIO = 32
+const MAX_PANEL_RATIO = 68
 
 const router = useRouter()
 const route = useRoute()
@@ -239,6 +279,7 @@ const appDetail = ref<AppVO | null>(null)
 const inputMessage = ref('')
 const messages = ref<ChatMessage[]>([])
 const historyRecords = ref<ChatHistory[]>([])
+const workspaceGridRef = ref<HTMLElement | null>(null)
 const messageListRef = ref<HTMLElement | null>(null)
 const previewFrameRef = ref<HTMLIFrameElement | null>(null)
 const streaming = ref(false)
@@ -249,6 +290,8 @@ const detailVisible = ref(false)
 const visualEditMode = ref(false)
 const selectedElementInfo = ref<VisualEditorSelectedElement | null>(null)
 const previewUrl = ref('')
+const previewSrcDoc = ref('')
+const previewRefreshToken = ref(Date.now())
 const previewRenderKey = ref(0)
 const showPreview = ref(false)
 const previewLoading = ref(false)
@@ -260,7 +303,12 @@ const historyLoadingMore = ref(false)
 const historyInitialized = ref(false)
 const loadedHistoryCount = ref(0)
 const autoSendingInitPrompt = ref(false)
+const windowWidth = ref(window.innerWidth)
+const panelLeftRatio = ref(45)
+const isResizingPanels = ref(false)
 let currentEventSource: EventSource | null = null
+let latestPreviewRequest = 0
+const pendingPreviewReloadTimers: number[] = []
 const visualEditor = createVisualEditor({
   onSelect: (payload) => {
     selectedElementInfo.value = payload
@@ -297,7 +345,20 @@ const showEmptyState = computed(
 const hasGeneratedPreview = computed(() => showPreview.value && Boolean(previewUrl.value))
 const showPreviewGeneratingState = computed(() => streaming.value && !hasGeneratedPreview.value)
 const showPreviewGeneratingOverlay = computed(() => streaming.value && hasGeneratedPreview.value)
-const showPreviewOverlay = computed(() => showPreviewGeneratingOverlay.value || previewLoading.value)
+const showPreviewOverlay = computed(
+  () => showPreviewGeneratingOverlay.value || previewLoading.value,
+)
+const showResizableSplit = computed(() => windowWidth.value > DESKTOP_SPLIT_BREAKPOINT)
+const workspaceGridStyle = computed(() => {
+  if (!showResizableSplit.value) {
+    return undefined
+  }
+
+  return {
+    '--chat-panel-size': `${panelLeftRatio.value}fr`,
+    '--preview-panel-size': `${100 - panelLeftRatio.value}fr`,
+  }
+})
 const previewStateTitle = computed(() =>
   previewLoading.value
     ? '预览资源加载中'
@@ -318,7 +379,9 @@ const statusText = computed(() => {
     return '当前为只读查看模式，可浏览应用历史和预览效果。'
   }
   if (streaming.value) {
-    return autoSendingInitPrompt.value ? 'AI 正在根据你的需求启动首轮生成' : 'AI 正在实时输出生成结果'
+    return autoSendingInitPrompt.value
+      ? 'AI 正在根据你的需求启动首轮生成'
+      : 'AI 正在实时输出生成结果'
   }
   if (showPreview.value) {
     return '网站预览已经准备好，可以继续微调需求。'
@@ -367,6 +430,73 @@ const scrollMessagesToBottom = async (behavior: ScrollBehavior = 'smooth') => {
   })
 }
 
+const clampPanelRatio = (value: number) =>
+  Math.min(MAX_PANEL_RATIO, Math.max(MIN_PANEL_RATIO, value))
+
+const updateWindowWidth = () => {
+  windowWidth.value = window.innerWidth
+}
+
+const stopResizePanels = () => {
+  isResizingPanels.value = false
+  window.removeEventListener('pointermove', handleResizePanelsPointerMove)
+  window.removeEventListener('pointerup', stopResizePanels)
+  document.body.style.removeProperty('cursor')
+  document.body.style.removeProperty('user-select')
+}
+
+const updatePanelRatioByClientX = (clientX: number) => {
+  const gridElement = workspaceGridRef.value
+  if (!gridElement || !showResizableSplit.value) {
+    return
+  }
+
+  const rect = gridElement.getBoundingClientRect()
+  const availableWidth = rect.width - RESIZE_HANDLE_WIDTH
+  if (availableWidth <= 0) {
+    return
+  }
+
+  const nextRatio = ((clientX - rect.left - RESIZE_HANDLE_WIDTH / 2) / availableWidth) * 100
+  panelLeftRatio.value = clampPanelRatio(nextRatio)
+}
+
+function handleResizePanelsPointerMove(event: PointerEvent) {
+  if (!isResizingPanels.value) {
+    return
+  }
+  updatePanelRatioByClientX(event.clientX)
+}
+
+const startResizePanels = (event: PointerEvent) => {
+  if (!showResizableSplit.value) {
+    return
+  }
+
+  isResizingPanels.value = true
+  updatePanelRatioByClientX(event.clientX)
+  window.addEventListener('pointermove', handleResizePanelsPointerMove)
+  window.addEventListener('pointerup', stopResizePanels)
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+}
+
+const handleResizeHandleKeydown = (event: KeyboardEvent) => {
+  if (!showResizableSplit.value) {
+    return
+  }
+
+  if (event.key === 'ArrowLeft') {
+    event.preventDefault()
+    panelLeftRatio.value = clampPanelRatio(panelLeftRatio.value - 3)
+  }
+
+  if (event.key === 'ArrowRight') {
+    event.preventDefault()
+    panelLeftRatio.value = clampPanelRatio(panelLeftRatio.value + 3)
+  }
+}
+
 const clearSelectedElement = () => {
   selectedElementInfo.value = null
 }
@@ -394,14 +524,156 @@ const toggleVisualEditMode = () => {
   message.success('已进入可视化编辑模式，请到右侧预览区域选择元素')
 }
 
+const appendPreviewCacheParam = (rawUrl: string, baseUrl: string, token: number) => {
+  const value = rawUrl.trim()
+  if (!value || value.startsWith('#') || /^(data|blob|mailto|tel|javascript):/i.test(value)) {
+    return rawUrl
+  }
+
+  try {
+    const url = new URL(value, baseUrl)
+    url.searchParams.set('_preview_t', String(token))
+    return url.toString()
+  } catch {
+    return rawUrl
+  }
+}
+
+const appendPreviewCacheParamToSrcset = (srcset: string, baseUrl: string, token: number) =>
+  srcset
+    .split(',')
+    .map((item) => {
+      const parts = item.trim().split(/\s+/)
+      if (!parts[0]) {
+        return item
+      }
+      parts[0] = appendPreviewCacheParam(parts[0], baseUrl, token)
+      return parts.join(' ')
+    })
+    .join(', ')
+
+const buildPreviewSrcDoc = (html: string, baseUrl: string, token: number) => {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(html, 'text/html')
+  const head = doc.head || doc.documentElement
+  const base = doc.createElement('base')
+  base.href = baseUrl
+  head.prepend(base)
+
+  doc.querySelectorAll<HTMLLinkElement>('link[href]').forEach((element) => {
+    element.href = appendPreviewCacheParam(element.getAttribute('href') || '', baseUrl, token)
+  })
+
+  doc.querySelectorAll<HTMLScriptElement>('script[src]').forEach((element) => {
+    element.src = appendPreviewCacheParam(element.getAttribute('src') || '', baseUrl, token)
+  })
+
+  doc
+    .querySelectorAll<HTMLImageElement | HTMLSourceElement>('img[src], source[src]')
+    .forEach((element) => {
+      element.setAttribute(
+        'src',
+        appendPreviewCacheParam(element.getAttribute('src') || '', baseUrl, token),
+      )
+    })
+
+  doc
+    .querySelectorAll<HTMLImageElement | HTMLSourceElement>('img[srcset], source[srcset]')
+    .forEach((element) => {
+      element.setAttribute(
+        'srcset',
+        appendPreviewCacheParamToSrcset(element.getAttribute('srcset') || '', baseUrl, token),
+      )
+    })
+
+  doc.querySelectorAll<HTMLVideoElement>('video[poster]').forEach((element) => {
+    element.poster = appendPreviewCacheParam(element.getAttribute('poster') || '', baseUrl, token)
+  })
+
+  return `<!doctype html>\n${doc.documentElement.outerHTML}`
+}
+
+const loadPreviewDocument = async () => {
+  if (!previewUrl.value) {
+    previewSrcDoc.value = ''
+    previewLoading.value = false
+    return
+  }
+
+  if (visualEditMode.value) {
+    visualEditor.attachToIframe(null)
+  }
+
+  const requestId = ++latestPreviewRequest
+  const token = Date.now()
+  const sourceUrl = appendPreviewCacheParam(previewUrl.value, window.location.href, token)
+
+  previewRefreshToken.value = token
+  previewLoading.value = true
+
+  try {
+    const response = await fetch(sourceUrl, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-store',
+      },
+    })
+
+    if (!response.ok) {
+      throw new Error(`Preview request failed: ${response.status}`)
+    }
+
+    const html = await response.text()
+    if (requestId !== latestPreviewRequest) {
+      return
+    }
+
+    previewSrcDoc.value = buildPreviewSrcDoc(html, previewUrl.value, token)
+    previewRenderKey.value += 1
+  } catch {
+    if (requestId !== latestPreviewRequest) {
+      return
+    }
+
+    previewSrcDoc.value = `
+      <!doctype html>
+      <html>
+        <head>
+          <base href="${previewUrl.value}" />
+          <meta http-equiv="refresh" content="0;url=${sourceUrl}" />
+        </head>
+        <body></body>
+      </html>
+    `
+    previewRenderKey.value += 1
+    previewLoading.value = false
+  }
+}
+
+const schedulePreviewReloads = (delays = [600, 1600, 3200, 5200, 8200, 12000]) => {
+  pendingPreviewReloadTimers.splice(0).forEach((timer) => window.clearTimeout(timer))
+  delays.forEach((delay) => {
+    const timer = window.setTimeout(() => {
+      if (!streaming.value && showPreview.value) {
+        void loadPreviewDocument()
+      }
+    }, delay)
+    pendingPreviewReloadTimers.push(timer)
+  })
+}
+
 const finalizePreview = () => {
   if (visualEditMode.value) {
     visualEditor.attachToIframe(null)
   }
   previewUrl.value = buildLocalPreviewUrl(appDetail.value?.id, appDetail.value?.codeGenType)
   showPreview.value = Boolean(previewUrl.value) && loadedHistoryCount.value >= 2
-  previewLoading.value = showPreview.value
-  previewRenderKey.value += 1
+  if (showPreview.value) {
+    void loadPreviewDocument()
+  } else {
+    previewSrcDoc.value = ''
+    previewLoading.value = false
+  }
 
   if (!showPreview.value && visualEditMode.value) {
     exitVisualEditMode()
@@ -568,6 +840,7 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       await loadAppDetail()
       await loadHistoryPage(false)
       finalizePreview()
+      schedulePreviewReloads()
       if (!options.silentSuccess) {
         message.success('本轮生成完成，右侧预览已更新')
       }
@@ -606,8 +879,7 @@ const refreshPreview = () => {
   if (visualEditMode.value) {
     visualEditor.attachToIframe(null)
   }
-  previewLoading.value = true
-  previewRenderKey.value += 1
+  void loadPreviewDocument()
 }
 
 const handlePreviewLoad = () => {
@@ -721,7 +993,8 @@ const handleExportMarkdown = async () => {
 }
 
 const useOptimizePrompt = () => {
-  inputMessage.value = '请在保留当前功能的基础上，优化排版层次、突出关键信息，并补全更完整的交互细节。'
+  inputMessage.value =
+    '请在保留当前功能的基础上，优化排版层次、突出关键信息，并补全更完整的交互细节。'
 }
 
 const tryAutoSendInitPrompt = async () => {
@@ -751,6 +1024,7 @@ const initializePage = async () => {
 }
 
 onMounted(() => {
+  window.addEventListener('resize', updateWindowWidth)
   void initializePage()
 })
 
@@ -772,7 +1046,16 @@ watch(canVisualEdit, (value) => {
   }
 })
 
+watch(showResizableSplit, (value) => {
+  if (!value) {
+    stopResizePanels()
+  }
+})
+
 onBeforeUnmount(() => {
+  pendingPreviewReloadTimers.splice(0).forEach((timer) => window.clearTimeout(timer))
+  window.removeEventListener('resize', updateWindowWidth)
+  stopResizePanels()
   closeStream()
   visualEditor.destroy()
 })
@@ -843,8 +1126,11 @@ onBeforeUnmount(() => {
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(420px, 0.9fr) minmax(520px, 1.1fr);
-  gap: 22px;
+  grid-template-columns:
+    minmax(420px, var(--chat-panel-size, 0.9fr))
+    16px
+    minmax(520px, var(--preview-panel-size, 1.1fr));
+  gap: 0;
   min-height: calc(100vh - 210px);
 }
 
@@ -855,8 +1141,67 @@ onBeforeUnmount(() => {
 }
 
 .chat-panel {
+  margin-right: 11px;
+}
+
+.chat-panel {
   display: flex;
   flex-direction: column;
+}
+
+.preview-panel {
+  margin-left: 11px;
+  min-height: calc(100vh - 210px);
+}
+
+.resize-handle {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.resize-handle__line {
+  width: 4px;
+  margin: 18px 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(31, 167, 199, 0.24), rgba(47, 105, 255, 0.38));
+  box-shadow: 0 10px 24px rgba(47, 105, 255, 0.12);
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.resize-handle:hover .resize-handle__line,
+.resize-handle:focus-visible .resize-handle__line,
+.workspace-grid.is-resizing .resize-handle__line {
+  transform: scaleX(1.15);
+  background: linear-gradient(180deg, rgba(31, 167, 199, 0.48), rgba(47, 105, 255, 0.72));
+  box-shadow: 0 16px 30px rgba(47, 105, 255, 0.2);
+}
+
+.resize-handle:focus-visible {
+  outline: none;
+}
+
+.preview-panel {
+  min-height: calc(100vh - 210px);
+}
+
+.chat-panel :deep(.ant-card-body),
+.preview-panel :deep(.ant-card-body) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
 }
 
 .message-list {
@@ -980,6 +1325,8 @@ onBeforeUnmount(() => {
 
 .preview-body {
   position: relative;
+  flex: 1;
+  display: flex;
   min-height: calc(100vh - 340px);
   border-radius: 24px;
   overflow: hidden;
@@ -999,6 +1346,7 @@ onBeforeUnmount(() => {
 
 .preview-state {
   display: grid;
+  flex: 1;
   place-items: center;
   gap: 22px;
   min-height: calc(100vh - 340px);
@@ -1028,8 +1376,13 @@ onBeforeUnmount(() => {
   width: 72px;
   height: 72px;
   border-radius: 50%;
-  background:
-    conic-gradient(from 180deg, rgba(31, 167, 199, 0.08), #22b8cf, #2f69ff, rgba(31, 167, 199, 0.08));
+  background: conic-gradient(
+    from 180deg,
+    rgba(31, 167, 199, 0.08),
+    #22b8cf,
+    #2f69ff,
+    rgba(31, 167, 199, 0.08)
+  );
   animation: spin 1.15s linear infinite;
   box-shadow: 0 18px 40px rgba(47, 105, 255, 0.16);
 }
@@ -1066,9 +1419,11 @@ onBeforeUnmount(() => {
 }
 
 .preview-frame {
+  flex: 1;
   display: block;
   width: 100%;
   min-height: calc(100vh - 340px);
+  height: 100%;
   border: 0;
   background: white;
 }
@@ -1124,6 +1479,16 @@ onBeforeUnmount(() => {
 @media (max-width: 1200px) {
   .workspace-grid {
     grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .chat-panel,
+  .preview-panel {
+    margin: 0;
+  }
+
+  .resize-handle {
+    display: none;
   }
 }
 

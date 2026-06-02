@@ -32,7 +32,11 @@ export function normalizeChatMessageRole(messageType?: string): ChatMessageRole 
   if (ASSISTANT_MESSAGE_TYPES.has(normalized)) {
     return 'assistant'
   }
-  if (normalized.includes('user') || normalized.includes('human') || normalized.includes('question')) {
+  if (
+    normalized.includes('user') ||
+    normalized.includes('human') ||
+    normalized.includes('question')
+  ) {
     return 'user'
   }
   if (
@@ -59,7 +63,9 @@ export function mapChatHistoryToMessage(item: ChatHistory): ChatMessage {
   }
 }
 
-export function sortChatHistoryAsc<T extends { createTime?: string; id?: number | string }>(records: T[]) {
+export function sortChatHistoryAsc<T extends { createTime?: string; id?: number | string }>(
+  records: T[],
+) {
   return [...records].sort((a, b) => {
     const aTime = a.createTime ? new Date(a.createTime).getTime() : 0
     const bTime = b.createTime ? new Date(b.createTime).getTime() : 0

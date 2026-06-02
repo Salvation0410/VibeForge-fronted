@@ -53,7 +53,9 @@
           <template v-else-if="column.key === 'action'">
             <a-space>
               <a-button type="link" @click="openDetail(record)">查看内容</a-button>
-              <a-button type="link" :disabled="!record.appId" @click="goToApp(record)">进入应用</a-button>
+              <a-button type="link" :disabled="!record.appId" @click="goToApp(record)"
+                >进入应用</a-button
+              >
             </a-space>
           </template>
         </template>

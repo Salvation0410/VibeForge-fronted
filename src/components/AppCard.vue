@@ -1,12 +1,7 @@
 <template>
   <article class="app-card" @click="handleCardClick">
     <div class="preview-shell">
-      <img v-if="hasRealCover" class="preview-image" :src="coverUrl" :alt="app.appName || '应用封面'" />
-      <div v-else class="preview-fallback">
-        <span class="preview-badge">{{ previewBadge }}</span>
-        <strong>{{ app.appName || '未命名应用' }}</strong>
-        <p>{{ app.initPrompt || '等待更多描述，生成更完整的网站效果。' }}</p>
-      </div>
+      <img class="preview-image" :src="coverUrl" :alt="app.appName || '应用封面'" />
     </div>
 
     <div class="card-body">
@@ -60,12 +55,10 @@ const emit = defineEmits<{
 const ownerName = computed(() => getAppOwnerName(props.app))
 const ownerAvatar = computed(() => getAppOwnerAvatar(props.app))
 const coverUrl = computed(() => getAppCoverUrl(props.app))
-const hasRealCover = computed(() => Boolean(props.app.cover?.trim()))
 const ownerInitial = computed(() => ownerName.value.slice(0, 1).toUpperCase())
 const createdText = computed(() => `创建于 ${formatRelativeTime(props.app.createTime)}`)
 const tagColor = computed(() => getAppTagColor(props.app.priority))
 const tagText = computed(() => ((props.app.priority ?? 0) >= 99 ? '精选' : '应用'))
-const previewBadge = computed(() => (props.app.codeGenType || 'web').toUpperCase())
 
 const handleCardClick = () => {
   emit('click', props.app)
@@ -108,42 +101,6 @@ const handleCardClick = () => {
   height: 100%;
   display: block;
   object-fit: cover;
-}
-
-.preview-fallback {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  height: 100%;
-  padding: 26px;
-  background:
-    radial-gradient(circle at 85% 10%, rgba(44, 198, 214, 0.2), transparent 28%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(236, 244, 252, 0.9));
-}
-
-.preview-badge {
-  display: inline-flex;
-  align-self: flex-start;
-  padding: 6px 12px;
-  margin-bottom: 14px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.72);
-  color: #1484b1;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
-.preview-fallback strong {
-  color: #16233a;
-  font-size: 28px;
-  line-height: 1.2;
-}
-
-.preview-fallback p {
-  margin: 12px 0 0;
-  color: #5f6f88;
-  line-height: 1.7;
 }
 
 .card-body {

@@ -2,10 +2,10 @@
   <a-layout class="app-layout">
     <a-layout-header class="app-header">
       <button class="brand" type="button" @click="router.push('/home')">
-        <img class="brand-logo" src="@/assets/logo.png" alt="一句话呈所想" />
+        <img class="brand-logo" src="@/assets/logo.png" alt="智创 · AI应用平台" />
         <div class="brand-copy">
-          <span class="brand-title">一句话呈所想</span>
-          <span class="brand-subtitle">AI 对话式应用生成平台</span>
+          <span class="brand-title">智创 · AI应用平台</span>
+          <span class="brand-subtitle">AI 驱动应用创新平台</span>
         </div>
       </button>
 

@@ -40,20 +40,33 @@
             </a-form-item>
 
             <a-form-item label="优先级">
-              <a-input-number v-model:value="formState.priority" :min="0" :max="999" class="full-width" />
+              <a-input-number
+                v-model:value="formState.priority"
+                :min="0"
+                :max="999"
+                class="full-width"
+              />
             </a-form-item>
           </template>
 
           <a-descriptions bordered :column="2" class="detail-grid">
             <a-descriptions-item label="应用 id">{{ appDetail?.id || '-' }}</a-descriptions-item>
-            <a-descriptions-item label="代码类型">{{ appDetail?.codeGenType || '-' }}</a-descriptions-item>
-            <a-descriptions-item label="创建时间">{{ formatDateTime(appDetail?.createTime) }}</a-descriptions-item>
-            <a-descriptions-item label="更新时间">{{ formatDateTime(appDetail?.updateTime) }}</a-descriptions-item>
+            <a-descriptions-item label="代码类型">{{
+              appDetail?.codeGenType || '-'
+            }}</a-descriptions-item>
+            <a-descriptions-item label="创建时间">{{
+              formatDateTime(appDetail?.createTime)
+            }}</a-descriptions-item>
+            <a-descriptions-item label="更新时间">{{
+              formatDateTime(appDetail?.updateTime)
+            }}</a-descriptions-item>
           </a-descriptions>
 
           <div class="submit-row">
             <a-button size="large" @click="resetForm">重置</a-button>
-            <a-button type="primary" html-type="submit" size="large" :loading="saving">保存修改</a-button>
+            <a-button type="primary" html-type="submit" size="large" :loading="saving"
+              >保存修改</a-button
+            >
           </div>
         </a-form>
       </a-spin>
