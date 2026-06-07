@@ -862,6 +862,14 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
         message.success('本轮生成完成，右侧预览已更新')
       }
     },
+    onBusinessError: (errorData) => {
+      streaming.value = false
+      autoSendingInitPrompt.value = false
+      const errorMessage = errorData.message || '生成过程中出现错误'
+
+      updateMessageContent(assistantMessageId, () => `❌ ${errorMessage}`)
+      message.error(errorMessage)
+    },
     onError: () => {
       streaming.value = false
       autoSendingInitPrompt.value = false

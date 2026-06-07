@@ -82,11 +82,22 @@ export interface ChatGenCodeChunk {
   d: string
 }
 
+export interface ChatGenCodeBusinessError {
+  error?: boolean
+  code?: number
+  message?: string
+}
+
 export interface ChatToGenCodeStreamOptions {
   appId: AppId
   message: string
   onMessage?: (chunk: string, payload: ChatGenCodeChunk, event: MessageEvent<string>) => void
   onDone?: (event: MessageEvent) => void
+  onBusinessError?: (
+    error: ChatGenCodeBusinessError,
+    event: MessageEvent<string>,
+    eventSource: EventSource,
+  ) => void
   onError?: (error: Event | SyntaxError, eventSource: EventSource) => void
 }
 
@@ -199,28 +210,65 @@ export function chatToGenCodeStream({
   message,
   onMessage,
   onDone,
+  onBusinessError,
   onError,
 }: ChatToGenCodeStreamOptions): EventSource {
   const url = buildSseUrl('/apps/chat/gen/code', { appId, message })
   const eventSource = new EventSource(url, { withCredentials: true })
+  let streamCompleted = false
 
   eventSource.onmessage = (event: MessageEvent<string>) => {
+    if (streamCompleted) {
+      return
+    }
+
     try {
       const payload = JSON.parse(event.data) as ChatGenCodeChunk
       onMessage?.(payload.d ?? '', payload, event)
     } catch (error) {
       if (error instanceof SyntaxError) {
+        streamCompleted = true
         onError?.(error, eventSource)
+        eventSource.close()
       }
     }
   }
 
+  eventSource.addEventListener('business-error', (event) => {
+    if (streamCompleted) {
+      return
+    }
+
+    streamCompleted = true
+    try {
+      const messageEvent = event as MessageEvent<string>
+      const errorData = JSON.parse(messageEvent.data) as ChatGenCodeBusinessError
+      onBusinessError?.(errorData, messageEvent, eventSource)
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        onError?.(error, eventSource)
+      }
+    } finally {
+      eventSource.close()
+    }
+  })
+
   eventSource.addEventListener('done', (event) => {
+    if (streamCompleted) {
+      return
+    }
+
+    streamCompleted = true
     onDone?.(event as MessageEvent)
     eventSource.close()
   })
 
   eventSource.onerror = (error: Event) => {
+    if (streamCompleted) {
+      return
+    }
+
+    streamCompleted = true
     onError?.(error, eventSource)
     eventSource.close()
   }
