@@ -11,6 +11,8 @@ export interface BaseResponse<T> {
   message: string
 }
 
+export type UserId = number | string
+
 /**
  * 通用分页请求参数
  */
@@ -300,7 +302,7 @@ export function getLoginUserDetail(): Promise<BaseResponse<SysUser>> {
  * @param id 用户 id
  * @returns 用户完整信息
  */
-export function getUserById(id: number): Promise<BaseResponse<SysUser>> {
+export function getUserById(id: UserId): Promise<BaseResponse<SysUser>> {
   return userRequest.get<BaseResponse<SysUser>>(`/users/${id}`).then(unwrapResponse)
 }
 
@@ -310,7 +312,7 @@ export function getUserById(id: number): Promise<BaseResponse<SysUser>> {
  * @param id 用户 id
  * @returns 用户脱敏信息
  */
-export function getUserVoById(id: number): Promise<BaseResponse<SysUserVO>> {
+export function getUserVoById(id: UserId): Promise<BaseResponse<SysUserVO>> {
   return userRequest.get<BaseResponse<SysUserVO>>(`/users/${id}/vo`).then(unwrapResponse)
 }
 
@@ -359,6 +361,14 @@ export function updateUserWithAvatar(
   return userRequest.put<BaseResponse<boolean>>(`/users/${id}`, formData).then(unwrapResponse)
 }
 
+export function updateCurrentUserProfileWithAvatar(
+  data: SysUserUpdateRequest,
+  avatarFile?: File | Blob,
+): Promise<BaseResponse<boolean>> {
+  const formData = buildUserFormData(data, avatarFile)
+  return userRequest.put<BaseResponse<boolean>>('/users/profile', formData).then(unwrapResponse)
+}
+
 /**
  * 删除用户
  *
@@ -388,6 +398,7 @@ const userApi = {
   getUserPage,
   updateUser,
   updateUserWithAvatar,
+  updateCurrentUserProfileWithAvatar,
   deleteUser,
 }
 

@@ -6,5 +6,6 @@ declare module 'vue-router' {
     requiresAuth?: boolean
     roles?: string[]
     hideInMenu?: boolean
+    hideAppHeader?: boolean
   }
 }

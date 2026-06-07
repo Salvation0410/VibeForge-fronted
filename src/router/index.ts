@@ -8,6 +8,14 @@ import AppChatView from '@/pages/AppChatView.vue'
 import AppManageView from '@/pages/AppManageView.vue'
 import AppEditView from '@/pages/AppEditView.vue'
 import ChatManageView from '@/pages/ChatManageView.vue'
+import CommunitySquareView from '@/views/community/CommunitySquareView.vue'
+import CommunityPostDetailView from '@/views/community/CommunityPostDetailView.vue'
+import CommunityPostReviewView from '@/views/community/CommunityPostReviewView.vue'
+import CommunityCommentAdminView from '@/views/community/CommunityCommentAdminView.vue'
+import CommunityTagAdminView from '@/views/community/CommunityTagAdminView.vue'
+import PostCreateView from '@/views/community/PostCreateView.vue'
+import AdminLayoutView from '@/views/admin/AdminLayoutView.vue'
+import AdminDashboardView from '@/views/admin/AdminDashboardView.vue'
 import { setupPermissionGuard } from '@/permission'
 
 const router = createRouter({
@@ -44,6 +52,78 @@ const router = createRouter({
           },
         },
         {
+          path: 'profile/:userId',
+          name: 'publicProfile',
+          component: ProfileView,
+          meta: {
+            title: '用户主页',
+            requiresAuth: false,
+            hideInMenu: true,
+          },
+        },
+        {
+          path: 'community',
+          name: 'community',
+          component: CommunitySquareView,
+          meta: {
+            title: '交流社区',
+            requiresAuth: false,
+            hideAppHeader: true,
+          },
+        },
+        {
+          path: 'community/post/:id',
+          name: 'communityPostDetail',
+          component: CommunityPostDetailView,
+          meta: {
+            title: '帖子详情',
+            requiresAuth: false,
+            hideInMenu: true,
+            hideAppHeader: true,
+          },
+        },
+        {
+          path: 'community/create',
+          name: 'communityCreate',
+          component: PostCreateView,
+          meta: {
+            title: '创建帖子',
+            requiresAuth: false,
+            hideInMenu: true,
+            hideAppHeader: true,
+          },
+        },
+        {
+          path: 'community/posts/manage',
+          name: 'communityPostManage',
+          redirect: '/admin/community/posts',
+          meta: {
+            title: '社区帖子审核',
+            requiresAuth: true,
+            roles: ['admin'],
+          },
+        },
+        {
+          path: 'community/comments/manage',
+          name: 'communityCommentManage',
+          redirect: '/admin/community/comments',
+          meta: {
+            title: '社区评论管理',
+            requiresAuth: true,
+            roles: ['admin'],
+          },
+        },
+        {
+          path: 'community/tags/manage',
+          name: 'communityTagManage',
+          redirect: '/admin/community/tags',
+          meta: {
+            title: '社区标签管理',
+            requiresAuth: true,
+            roles: ['admin'],
+          },
+        },
+        {
           path: 'apps/:id/chat',
           name: 'appChat',
           component: AppChatView,
@@ -66,7 +146,7 @@ const router = createRouter({
         {
           path: 'apps/manage',
           name: 'appManage',
-          component: AppManageView,
+          redirect: '/admin/apps',
           meta: {
             title: '应用管理',
             requiresAuth: true,
@@ -76,7 +156,7 @@ const router = createRouter({
         {
           path: 'chats/manage',
           name: 'chatManage',
-          component: ChatManageView,
+          redirect: '/admin/chats',
           meta: {
             title: '对话管理',
             requiresAuth: true,
@@ -86,12 +166,97 @@ const router = createRouter({
         {
           path: 'users',
           name: 'users',
-          component: UserManageView,
+          redirect: '/admin/users',
           meta: {
             title: '用户管理',
             requiresAuth: true,
             roles: ['admin'],
           },
+        },
+        {
+          path: 'admin',
+          component: AdminLayoutView,
+          meta: {
+            title: '后台管理',
+            requiresAuth: true,
+            roles: ['admin'],
+          },
+          children: [
+            {
+              path: '',
+              redirect: '/admin/dashboard',
+            },
+            {
+              path: 'dashboard',
+              name: 'adminDashboard',
+              component: AdminDashboardView,
+              meta: {
+                title: '数据报表',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'community/posts',
+              name: 'adminCommunityPosts',
+              component: CommunityPostReviewView,
+              meta: {
+                title: '社区帖子审核',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'community/comments',
+              name: 'adminCommunityComments',
+              component: CommunityCommentAdminView,
+              meta: {
+                title: '社区评论管理',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'community/tags',
+              name: 'adminCommunityTags',
+              component: CommunityTagAdminView,
+              meta: {
+                title: '社区标签管理',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'apps',
+              name: 'adminApps',
+              component: AppManageView,
+              meta: {
+                title: '应用管理',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'chats',
+              name: 'adminChats',
+              component: ChatManageView,
+              meta: {
+                title: '对话管理',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'users',
+              name: 'adminUsers',
+              component: UserManageView,
+              meta: {
+                title: '用户管理',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+          ],
         },
       ],
     },

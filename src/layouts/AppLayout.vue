@@ -1,6 +1,6 @@
 <template>
   <a-layout class="app-layout">
-    <a-layout-header class="app-header">
+    <a-layout-header v-if="!hideAppHeader" class="app-header">
       <button class="brand" type="button" @click="router.push('/home')">
         <img class="brand-logo" src="@/assets/logo.png" alt="智创 · AI应用平台" />
         <div class="brand-copy">
@@ -17,7 +17,7 @@
         @click="handleMenuClick"
       />
 
-      <div class="user-zone">
+      <div v-if="loginUserStore.isLogin" class="user-zone">
         <a-dropdown placement="bottomRight">
           <button class="user-trigger" type="button">
             <a-avatar class="avatar" :src="loginUserStore.loginUser?.avatarUrl">
@@ -37,9 +37,13 @@
           </template>
         </a-dropdown>
       </div>
+      <div v-else class="guest-actions">
+        <a-button @click="router.push('/login')">登录</a-button>
+        <a-button type="primary" @click="router.push('/register')">注册</a-button>
+      </div>
     </a-layout-header>
 
-    <a-layout-content class="app-content">
+    <a-layout-content class="app-content" :class="{ 'community-content': hideAppHeader }">
       <router-view />
     </a-layout-content>
   </a-layout>
@@ -61,14 +65,11 @@ const loginUserStore = useLoginUserStore()
 const selectedKeys = ref<string[]>(['/home'])
 
 function resolveMenuKey(path: string) {
-  if (path.startsWith('/apps/manage')) {
-    return '/apps/manage'
+  if (path.startsWith('/admin')) {
+    return '/admin'
   }
-  if (path.startsWith('/chats/manage')) {
-    return '/chats/manage'
-  }
-  if (path.startsWith('/users')) {
-    return '/users'
+  if (path.startsWith('/community')) {
+    return '/community'
   }
   if (path.startsWith('/home')) {
     return '/home'
@@ -86,6 +87,7 @@ watch(
 )
 
 const isAdmin = computed(() => isAdminRole(loginUserStore.loginUser?.userRole))
+const hideAppHeader = computed(() => Boolean(route.meta.hideAppHeader))
 const displayName = computed(
   () => loginUserStore.loginUser?.nickname || loginUserStore.loginUser?.account || '用户',
 )
@@ -93,17 +95,25 @@ const avatarText = computed(() => (displayName.value.slice(0, 1) || 'U').toUpper
 const roleLabel = computed(() => (isAdmin.value ? '管理员' : '普通用户'))
 
 const menuItems = computed<MenuProps['items']>(() => {
-  const items: NonNullable<MenuProps['items']> = [{ key: '/home', label: '首页' }]
+  const items: NonNullable<MenuProps['items']> = [
+    { key: '/home', label: '首页' },
+    { key: '/community', label: '交流社区' },
+  ]
   if (isAdmin.value) {
-    items.push({ key: '/apps/manage', label: '应用管理' })
-    items.push({ key: '/chats/manage', label: '对话管理' })
-    items.push({ key: '/users', label: '用户管理' })
+    items.push({ key: '/admin', label: '后台管理' })
   }
   return items
 })
 
 const handleMenuClick: MenuProps['onClick'] = (e) => {
-  router.push(String(e.key))
+  const key = String(e.key)
+  if (key === '/community' && route.path.startsWith('/home')) {
+    const target = router.resolve('/community')
+    window.open(target.href, '_blank', 'noopener')
+    return
+  }
+
+  router.push(key)
 }
 
 const handleUserMenuClick: MenuProps['onClick'] = (e) => {
@@ -205,10 +215,15 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
   border-bottom: 0;
 }
 
-.user-zone {
+.user-zone,
+.guest-actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+}
+
+.guest-actions {
+  gap: 10px;
 }
 
 .user-trigger {
@@ -246,6 +261,10 @@ const handleUserMenuClick: MenuProps['onClick'] = (e) => {
 
 .app-content {
   padding: 28px;
+}
+
+.community-content {
+  padding: 0;
 }
 
 :deep(.nav-menu.ant-menu-horizontal) {

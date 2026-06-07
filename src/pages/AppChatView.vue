@@ -272,8 +272,8 @@ const router = useRouter()
 const route = useRoute()
 const loginUserStore = useLoginUserStore()
 const logoSrc = new URL('@/assets/logo.png', import.meta.url).href
-const routeAppId = String(route.params.id || '') as AppId
-const enteredFromCreate = ref(route.query.mode === 'create')
+const routeAppId = computed(() => String(route.params.id || '') as AppId)
+const enteredFromCreate = computed(() => route.query.mode === 'create')
 
 const appDetail = ref<AppVO | null>(null)
 const inputMessage = ref('')
@@ -315,7 +315,9 @@ const visualEditor = createVisualEditor({
   },
 })
 
-const activeAppId = computed(() => String(appDetail.value?.id || routeAppId))
+let initializeRequestId = 0
+
+const activeAppId = computed(() => String(appDetail.value?.id || routeAppId.value))
 const codeGenTypeLabel = computed(() => (appDetail.value?.codeGenType || 'web').toUpperCase())
 const canOperate = computed(() => canManageApp(loginUserStore.loginUser, appDetail.value))
 const canVisualEdit = computed(
@@ -709,15 +711,35 @@ const closeStream = () => {
   currentEventSource = null
 }
 
-const loadAppDetail = async () => {
-  if (!routeAppId) {
+const resetPageState = () => {
+  closeStream()
+  autoSendingInitPrompt.value = false
+  deploying.value = false
+  exporting.value = false
+  downloadingCode.value = false
+  detailVisible.value = false
+  appDetail.value = null
+  inputMessage.value = ''
+  deployedUrl.value = ''
+  selectedElementInfo.value = null
+  historyInitialized.value = false
+  historyLoadingInitial.value = false
+  historyLoadingMore.value = false
+  resetHistoryState()
+}
+
+const loadAppDetail = async (appId = routeAppId.value, requestId?: number) => {
+  if (!appId) {
     message.error('应用 id 无效')
     await router.replace('/home')
     return false
   }
 
   try {
-    const res = await getAppDetail(routeAppId)
+    const res = await getAppDetail(appId)
+    if (requestId && requestId !== initializeRequestId) {
+      return false
+    }
     if (!isSuccessCode(res.code) || !res.data) {
       throw new Error(res.message || '获取应用详情失败')
     }
@@ -771,11 +793,6 @@ const loadHistoryPage = async (loadMore = false) => {
     hasMoreHistory.value = pageRecords.length >= HISTORY_PAGE_SIZE && Boolean(historyCursor.value)
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : '加载对话历史失败'
-
-    if (!loadMore && enteredFromCreate.value && loadedHistoryCount.value === 0) {
-      resetHistoryState()
-      return
-    }
 
     message.error(errorMessage)
   } finally {
@@ -1009,24 +1026,47 @@ const tryAutoSendInitPrompt = async () => {
 }
 
 const initializePage = async () => {
-  const loaded = await loadAppDetail()
+  const requestId = ++initializeRequestId
+  resetPageState()
+
+  if (!loginUserStore.hasFetched) {
+    await loginUserStore.fetchLoginUser()
+  }
+  if (requestId !== initializeRequestId) {
+    return
+  }
+
+  const loaded = await loadAppDetail(routeAppId.value, requestId)
   if (!loaded) {
     return
   }
 
   await loadHistoryPage(false)
+  if (requestId !== initializeRequestId) {
+    return
+  }
   await tryAutoSendInitPrompt()
+  if (requestId !== initializeRequestId) {
+    return
+  }
   finalizePreview()
 
   if (route.query.mode === 'create') {
-    await router.replace(`/apps/${routeAppId}/chat`)
+    await router.replace(`/apps/${routeAppId.value}/chat`)
   }
 }
 
 onMounted(() => {
   window.addEventListener('resize', updateWindowWidth)
-  void initializePage()
 })
+
+watch(
+  () => routeAppId.value,
+  () => {
+    void initializePage()
+  },
+  { immediate: true },
+)
 
 watch(
   () => [

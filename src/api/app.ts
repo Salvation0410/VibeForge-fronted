@@ -146,6 +146,15 @@ export function getGoodAppPage(data: AppQueryRequest): Promise<BaseResponse<Page
     .then(unwrapResponse)
 }
 
+export function getUserPublicAppPage(
+  userId: AppId,
+  params?: AppQueryRequest,
+): Promise<BaseResponse<PageResult<AppVO>>> {
+  return appRequest
+    .get<BaseResponse<PageResult<AppVO>>>(`/apps/user/${userId}/page`, { params })
+    .then(unwrapResponse)
+}
+
 export function deleteAppByAdmin(id: AppId): Promise<BaseResponse<boolean>> {
   const payload: DeleteRequest = { id }
   return appRequest.post<BaseResponse<boolean>>('/apps/admin/delete', payload).then(unwrapResponse)
@@ -226,6 +235,7 @@ const appApi = {
   getAppDetail,
   getMyAppPage,
   getGoodAppPage,
+  getUserPublicAppPage,
   deleteAppByAdmin,
   updateAppByAdmin,
   getAppPageByAdmin,
