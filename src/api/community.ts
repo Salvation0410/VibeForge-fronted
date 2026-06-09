@@ -70,8 +70,12 @@ export interface CommunityCommentVO {
   depth?: number
   path?: string
   content?: string
+  status?: 'APPROVED' | 'REJECTED'
   likeCount?: number
   replyCount?: number
+  reviewerId?: CommunityId
+  reviewTime?: string
+  rejectReason?: string
   createTime?: string
   user?: SysUserVO
   replyUser?: SysUserVO
@@ -151,7 +155,14 @@ export interface CommunityCommentAdminQueryRequest {
   parentId?: CommunityId
   rootId?: CommunityId
   userId?: CommunityId
+  status?: 'APPROVED' | 'REJECTED'
   keyword?: string
+}
+
+export interface CommunityCommentReviewRequest {
+  commentId: CommunityId
+  status: 'APPROVED' | 'REJECTED'
+  rejectReason?: string
 }
 
 const communityRequest = axios.create({
@@ -331,6 +342,14 @@ export function deleteCommunityCommentByAdmin(
     .then(unwrapResponse)
 }
 
+export function reviewCommunityComment(
+  data: CommunityCommentReviewRequest,
+): Promise<BaseResponse<boolean>> {
+  return communityRequest
+    .post<BaseResponse<boolean>>('/community/comments/admin/review', data)
+    .then(unwrapResponse)
+}
+
 const communityApi = {
   getCommunityTagList,
   getAllCommunityTagList,
@@ -351,6 +370,7 @@ const communityApi = {
   getCommunityCommentPageByAdmin,
   getCommunityCommentDetailByAdmin,
   deleteCommunityCommentByAdmin,
+  reviewCommunityComment,
 }
 
 export default communityApi

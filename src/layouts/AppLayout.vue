@@ -74,6 +74,9 @@ function resolveMenuKey(path: string) {
   if (path.startsWith('/home')) {
     return '/home'
   }
+  if (path.startsWith('/docs')) {
+    return '/docs'
+  }
   return ''
 }
 
@@ -97,6 +100,7 @@ const roleLabel = computed(() => (isAdmin.value ? '管理员' : '普通用户'))
 const menuItems = computed<MenuProps['items']>(() => {
   const items: NonNullable<MenuProps['items']> = [
     { key: '/home', label: '首页' },
+    { key: '/docs', label: '使用文档' },
     { key: '/community', label: '交流社区' },
   ]
   if (isAdmin.value) {

@@ -13,7 +13,7 @@
           :auto-size="{ minRows: 5, maxRows: 7 }"
           :maxlength="1000"
           class="prompt-input"
-          placeholder="使用 NoCode 创建一个高效的小工具，帮我计算......"
+          placeholder="描述你想做的应用，比如：帮我做一个记账工具，可以记录收支，并按月份统计"
         />
 
         <div class="prompt-toolbar">
@@ -152,7 +152,12 @@ import { buildAppNameFromPrompt, DEFAULT_CODE_GEN_TYPE, isSuccessCode } from '@/
 
 const router = useRouter()
 
-const promptExamples = ['波普风电商页面', '企业网站', '电商运营后台', '暗黑话题社区']
+const promptExamples = [
+  '做一个适合潮牌的电商首页',
+  '做一个公司官网，展示业务和联系方式',
+  '做一个电商运营后台，看订单和销售数据',
+  '做一个深色风格的兴趣社区',
+]
 
 const promptText = ref('')
 const creating = ref(false)

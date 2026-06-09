@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import AuthLayout from '@/layouts/AuthLayout.vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import HomeView from '@/pages/HomeView.vue'
+import DocsView from '@/pages/DocsView.vue'
 import ProfileView from '@/pages/ProfileView.vue'
 import UserManageView from '@/pages/UserManageView.vue'
 import AppChatView from '@/pages/AppChatView.vue'
@@ -39,6 +40,15 @@ const router = createRouter({
           meta: {
             title: '首页',
             requiresAuth: true,
+          },
+        },
+        {
+          path: 'docs',
+          name: 'docs',
+          component: DocsView,
+          meta: {
+            title: '使用文档',
+            requiresAuth: false,
           },
         },
         {

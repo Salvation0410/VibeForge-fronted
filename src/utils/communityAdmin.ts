@@ -7,6 +7,12 @@ export const COMMUNITY_POST_STATUS_OPTIONS = [
   { label: '已驳回', value: 'REJECTED' },
 ] as const
 
+export const COMMUNITY_COMMENT_STATUS_OPTIONS = [
+  { label: '全部状态', value: 'ALL' },
+  { label: '已通过', value: 'APPROVED' },
+  { label: '已驳回', value: 'REJECTED' },
+] as const
+
 export const COMMUNITY_TAG_STATUS_OPTIONS = [
   { label: '全部', value: -1 },
   { label: '启用', value: 1 },
@@ -35,6 +41,20 @@ export function getCommunityPostStatusColor(status?: CommunityPostVO['status']) 
   if (status === 'PENDING') {
     return 'orange'
   }
+  if (status === 'REJECTED') {
+    return 'red'
+  }
+  return 'green'
+}
+
+export function getCommunityCommentStatusText(status?: CommunityCommentVO['status']) {
+  if (status === 'REJECTED') {
+    return '已驳回'
+  }
+  return '已通过'
+}
+
+export function getCommunityCommentStatusColor(status?: CommunityCommentVO['status']) {
   if (status === 'REJECTED') {
     return 'red'
   }
