@@ -110,20 +110,6 @@
           </div>
         </div>
 
-        <div class="other-login">
-          <div class="divider"><span>其他登录方式</span></div>
-          <div class="other-actions">
-            <button type="button" aria-label="微信登录">
-              <WechatOutlined />
-              <span>微信登录</span>
-            </button>
-            <button type="button" aria-label="企业SSO">
-              <BankOutlined />
-              <span>企业SSO</span>
-            </button>
-          </div>
-        </div>
-
         <footer class="mobile-footer">
           <nav aria-label="辅助链接">
             <a href="javascript:void(0)">帮助中心</a>
@@ -144,13 +130,11 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   AppstoreOutlined,
-  BankOutlined,
   BarChartOutlined,
   CaretRightFilled,
   DeploymentUnitOutlined,
   SafetyOutlined,
   ThunderboltOutlined,
-  WechatOutlined,
 } from '@ant-design/icons-vue'
 import LoginView from '@/pages/LoginView.vue'
 import RegisterView from '@/pages/RegisterView.vue'
@@ -577,57 +561,6 @@ const go = (path: '/login' | '/register') => {
   padding: 20px 40px 24px;
 }
 
-.other-login {
-  width: min(100%, 520px);
-  margin-top: 18px;
-}
-
-.divider {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-  color: #7c8799;
-  font-size: 13px;
-}
-
-.divider::before,
-.divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: #e4eaf3;
-}
-
-.other-actions {
-  display: flex;
-  justify-content: center;
-  gap: 46px;
-  margin-top: 14px;
-}
-
-.other-actions button {
-  display: grid;
-  gap: 8px;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  color: #6c778a;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.other-actions button :deep(.anticon) {
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #ffffff;
-  color: #176fff;
-  font-size: 21px;
-  box-shadow: 0 10px 26px rgba(40, 85, 140, 0.1);
-}
-
 @media (max-height: 720px) and (min-width: 1181px) {
   .brand-side {
     padding: 24px 32px 18px;
@@ -671,8 +604,7 @@ const go = (path: '/login' | '/register') => {
   }
 
   .metrics,
-  .auth-footer,
-  .other-login {
+  .auth-footer {
     display: none;
   }
 
@@ -683,10 +615,6 @@ const go = (path: '/login' | '/register') => {
   .auth-card {
     width: min(100%, 500px);
   }
-}
-
-.other-actions button:first-child :deep(.anticon) {
-  color: #17b928;
 }
 
 .mobile-footer {
@@ -743,8 +671,5 @@ const go = (path: '/login' | '/register') => {
     font-size: 16px;
   }
 
-  .other-actions {
-    gap: 28px;
-  }
 }
 </style>

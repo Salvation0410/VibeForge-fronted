@@ -111,7 +111,7 @@ const menuItems = computed<MenuProps['items']>(() => {
 
 const handleMenuClick: MenuProps['onClick'] = (e) => {
   const key = String(e.key)
-  if (key === '/community' && route.path.startsWith('/home')) {
+  if (key === '/community') {
     const target = router.resolve('/community')
     window.open(target.href, '_blank', 'noopener')
     return

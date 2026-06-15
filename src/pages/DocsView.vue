@@ -32,7 +32,7 @@
         </p>
         <div class="hero-actions">
           <a-button type="primary" size="large" @click="router.push('/home')">开始创建应用</a-button>
-          <a-button size="large" @click="router.push('/community')">查看交流社区</a-button>
+          <a-button size="large" @click="openCommunity">查看交流社区</a-button>
         </div>
       </section>
 
@@ -165,6 +165,10 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const activeSection = ref('intro')
+
+const openCommunity = () => {
+  window.open('/community', '_blank', 'noopener')
+}
 
 const navItems = [
   { id: 'intro', title: '文档首页' },
