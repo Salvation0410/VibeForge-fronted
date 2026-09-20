@@ -262,6 +262,7 @@ import {
   createGenerationStreamProgress,
   type GenerationStreamProgress,
 } from '@/utils/generationStreamProgress'
+import { createPreviewRefreshCoordinator } from '@/utils/previewRefreshCoordinator'
 import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
 import {
   downloadBlobFile,
@@ -328,7 +329,6 @@ let generationRunId = 0
 let messageScrollTimer: number | null = null
 let shouldFollowMessages = true
 let latestPreviewRequest = 0
-const pendingPreviewReloadTimers: number[] = []
 const visualEditor = createVisualEditor({
   onSelect: (payload) => {
     selectedElementInfo.value = payload
@@ -646,11 +646,14 @@ const buildPreviewSrcDoc = (html: string, baseUrl: string, token: number) => {
   return `<!doctype html>\n${doc.documentElement.outerHTML}`
 }
 
+/**
+ * 获取并替换完整预览文档；请求失败时保留当前 srcdoc，不再用定时跳转覆盖可用旧版本。
+ */
 const loadPreviewDocument = async () => {
   if (!previewUrl.value) {
     previewSrcDoc.value = ''
     previewLoading.value = false
-    return
+    return false
   }
 
   if (visualEditMode.value) {
@@ -678,52 +681,30 @@ const loadPreviewDocument = async () => {
 
     const html = await response.text()
     if (requestId !== latestPreviewRequest) {
-      return
+      return false
     }
 
     previewSrcDoc.value = buildPreviewSrcDoc(html, previewUrl.value, token)
     previewRenderKey.value += 1
+    return true
   } catch {
     if (requestId !== latestPreviewRequest) {
-      return
+      return false
     }
-
-    previewSrcDoc.value = `
-      <!doctype html>
-      <html>
-        <head>
-          <base href="${previewUrl.value}" />
-          <meta http-equiv="refresh" content="0;url=${sourceUrl}" />
-        </head>
-        <body></body>
-      </html>
-    `
-    previewRenderKey.value += 1
     previewLoading.value = false
+    message.warning('最新预览加载失败，已保留上一版内容，请点击“刷新预览”重试。')
+    return false
   }
 }
 
-const schedulePreviewReloads = (delays = [600, 1600, 3200, 5200, 8200, 12000]) => {
-  pendingPreviewReloadTimers.splice(0).forEach((timer) => window.clearTimeout(timer))
-  delays.forEach((delay) => {
-    const timer = window.setTimeout(() => {
-      if (!streaming.value && showPreview.value) {
-        void loadPreviewDocument()
-      }
-    }, delay)
-    pendingPreviewReloadTimers.push(timer)
-  })
-}
-
-const finalizePreview = () => {
+/** 根据最新应用和历史状态同步预览地址；本方法不发起网络请求，生成期间旧 iframe 保持挂载。 */
+const syncPreviewState = () => {
   if (visualEditMode.value) {
     visualEditor.attachToIframe(null)
   }
   previewUrl.value = buildLocalPreviewUrl(appDetail.value?.id, appDetail.value?.codeGenType)
   showPreview.value = Boolean(previewUrl.value) && loadedHistoryCount.value >= 2
-  if (showPreview.value) {
-    void loadPreviewDocument()
-  } else {
+  if (!showPreview.value) {
     previewSrcDoc.value = ''
     previewLoading.value = false
   }
@@ -733,20 +714,26 @@ const finalizePreview = () => {
   }
 }
 
+const previewRefreshCoordinator = createPreviewRefreshCoordinator(async () => {
+  syncPreviewState()
+  if (showPreview.value) {
+    await loadPreviewDocument()
+  }
+})
+
 const resetHistoryState = () => {
   historyRecords.value = []
   messages.value = []
   loadedHistoryCount.value = 0
   historyCursor.value = undefined
   hasMoreHistory.value = false
-  finalizePreview()
+  syncPreviewState()
 }
 
 const rebuildMessagesFromHistory = (records: ChatHistory[]) => {
   historyRecords.value = sortChatHistoryAsc(records)
   messages.value = historyRecords.value.map(mapChatHistoryToMessage)
   loadedHistoryCount.value = historyRecords.value.length
-  finalizePreview()
 }
 
 const mergeHistoryRecords = (currentRecords: ChatHistory[], nextRecords: ChatHistory[]) => {
@@ -903,10 +890,11 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
   streaming.value = true
   shouldFollowMessages = true
   autoSendingInitPrompt.value = Boolean(options.isAutoInit)
-  finalizePreview()
 
   const assistantMessageId = appendAssistantPlaceholder('正在生成，已接收 0 个字符')
   const runId = ++generationRunId
+  const previewRequestKey = String(runId)
+  previewRefreshCoordinator.begin(previewRequestKey)
 
   disposeStreamProgress()
   closeStream()
@@ -944,10 +932,10 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       autoSendingInitPrompt.value = false
       await loadAppDetail()
       await loadHistoryPage(false)
-      finalizePreview()
-      schedulePreviewReloads()
+      // 后端发布完成并发出 done 后，当前轮次只允许刷新一次；不再依赖定时猜测构建时机。
+      await previewRefreshCoordinator.complete(previewRequestKey)
       if (!options.silentSuccess) {
-        message.success('本轮生成完成，右侧预览已更新')
+        message.success('本轮生成完成')
       }
     },
     onBusinessError: (errorData) => {
@@ -958,6 +946,7 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       currentEventSource = null
       streaming.value = false
       autoSendingInitPrompt.value = false
+      previewRefreshCoordinator.fail(previewRequestKey)
       const knownErrorMessages: Record<string, string> = {
         MODEL_OUTPUT_TRUNCATED: '模型输出不完整，本轮未发布，请缩小修改范围后重试。',
         HTML_FORMAT_INVALID: 'HTML 输出格式不完整，本轮未发布，请重试。',
@@ -981,6 +970,7 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       currentEventSource = null
       streaming.value = false
       autoSendingInitPrompt.value = false
+      previewRefreshCoordinator.fail(previewRequestKey)
       updateMessageContent(
         assistantMessageId,
         () => '生成过程被中断，请稍后重试，或补充更明确的描述。',
@@ -1000,6 +990,7 @@ const stopGeneration = () => {
   if (!streaming.value) {
     return
   }
+  previewRefreshCoordinator.fail(String(generationRunId))
   generationRunId += 1
   disposeStreamProgress()
   closeStream()
@@ -1179,7 +1170,10 @@ const initializePage = async () => {
   if (requestId !== initializeRequestId) {
     return
   }
-  finalizePreview()
+  syncPreviewState()
+  if (showPreview.value) {
+    await loadPreviewDocument()
+  }
 
   if (route.query.mode === 'create') {
     await router.replace(`/apps/${routeAppId.value}/chat`)
@@ -1228,7 +1222,7 @@ watch(showResizableSplit, (value) => {
 })
 
 onBeforeUnmount(() => {
-  pendingPreviewReloadTimers.splice(0).forEach((timer) => window.clearTimeout(timer))
+  previewRefreshCoordinator.dispose()
   window.removeEventListener('resize', updateWindowWidth)
   stopResizePanels()
   generationRunId += 1
