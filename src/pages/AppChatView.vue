@@ -249,6 +249,7 @@ import {
 import { useLoginUserStore } from '@/stores/loginUser'
 import { canManageApp, canViewApp } from '@/utils/appAccess'
 import { buildLocalPreviewUrl, formatDateTime, isSuccessCode } from '@/utils/appUtils'
+import { buildOptimizePrompt } from '@/utils/optimizePrompt'
 import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
 import {
   downloadBlobFile,
@@ -1017,9 +1018,9 @@ const handleExportMarkdown = async () => {
   }
 }
 
+/** 将当前应用生成类型对应的优化要求填入输入框，不直接触发生成。 */
 const useOptimizePrompt = () => {
-  inputMessage.value =
-    '请在保留当前功能的基础上，优化排版层次、突出关键信息，并补全更完整的交互细节。'
+  inputMessage.value = buildOptimizePrompt(appDetail.value?.codeGenType)
 }
 
 const tryAutoSendInitPrompt = async () => {
