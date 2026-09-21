@@ -279,7 +279,9 @@ const DESKTOP_SPLIT_BREAKPOINT = 1200
 const RESIZE_HANDLE_WIDTH = 16
 const MIN_PANEL_RATIO = 32
 const MAX_PANEL_RATIO = 68
+// 流式内容最多每 80ms 刷新一次且只显示末尾 2000 个字符，避免长源码拖慢页面。
 const STREAM_PROGRESS_INTERVAL_MS = 80
+const STREAM_VISIBLE_CHARACTER_LIMIT = 2_000
 const STREAM_SCROLL_INTERVAL_MS = 200
 const STREAM_SCROLL_BOTTOM_THRESHOLD_PX = 48
 
@@ -898,16 +900,18 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
   closeStream()
   currentStreamProgress = createGenerationStreamProgress({
     intervalMs: STREAM_PROGRESS_INTERVAL_MS,
+    maxVisibleCharacters: STREAM_VISIBLE_CHARACTER_LIMIT,
     schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
     cancelSchedule: (handle) => window.clearTimeout(handle),
-    onFlush: ({ receivedCharacters, elapsedMs }) => {
+    onFlush: ({ receivedCharacters, elapsedMs, visibleContent }) => {
       if (runId !== generationRunId) {
         return
       }
       const elapsedSeconds = (elapsedMs / 1000).toFixed(1)
       updateMessageContent(
         assistantMessageId,
-        () => `正在生成，已接收 ${receivedCharacters} 个字符，已用时 ${elapsedSeconds} 秒`,
+        () =>
+          `正在生成，已接收 ${receivedCharacters} 个字符，已用时 ${elapsedSeconds} 秒\n\n${visibleContent}`,
       )
     },
   })
