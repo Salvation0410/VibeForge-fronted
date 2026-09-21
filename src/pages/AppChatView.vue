@@ -41,7 +41,7 @@
       :style="workspaceGridStyle"
     >
       <a-card class="chat-panel" :bordered="false">
-        <div ref="messageListRef" class="message-list">
+        <div ref="messageListRef" class="message-list" @scroll="handleMessageListScroll">
           <div v-if="showHistoryToolbar" class="history-toolbar">
             <a-button
               v-if="hasMoreHistory"
@@ -113,9 +113,17 @@
                 {{ visualEditMode ? '退出可视化编辑' : '可视化编辑' }}
               </a-button>
               <a-button
+                v-if="streaming"
+                danger
+                :disabled="!canOperate"
+                @click="stopGeneration"
+              >
+                停止生成
+              </a-button>
+              <a-button
+                v-else
                 type="primary"
                 :disabled="!canOperate"
-                :loading="streaming"
                 @click="sendMessage()"
               >
                 发送消息
@@ -249,6 +257,12 @@ import {
 import { useLoginUserStore } from '@/stores/loginUser'
 import { canManageApp, canViewApp } from '@/utils/appAccess'
 import { buildLocalPreviewUrl, formatDateTime, isSuccessCode } from '@/utils/appUtils'
+import { buildOptimizePrompt } from '@/utils/optimizePrompt'
+import {
+  createGenerationStreamProgress,
+  type GenerationStreamProgress,
+} from '@/utils/generationStreamProgress'
+import { createPreviewRefreshCoordinator } from '@/utils/previewRefreshCoordinator'
 import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
 import {
   downloadBlobFile,
@@ -267,6 +281,9 @@ const DESKTOP_SPLIT_BREAKPOINT = 1200
 const RESIZE_HANDLE_WIDTH = 16
 const MIN_PANEL_RATIO = 32
 const MAX_PANEL_RATIO = 68
+const STREAM_PROGRESS_INTERVAL_MS = 80
+const STREAM_SCROLL_INTERVAL_MS = 200
+const STREAM_SCROLL_BOTTOM_THRESHOLD_PX = 48
 
 const router = useRouter()
 const route = useRoute()
@@ -307,8 +324,11 @@ const windowWidth = ref(window.innerWidth)
 const panelLeftRatio = ref(45)
 const isResizingPanels = ref(false)
 let currentEventSource: EventSource | null = null
+let currentStreamProgress: GenerationStreamProgress | null = null
+let generationRunId = 0
+let messageScrollTimer: number | null = null
+let shouldFollowMessages = true
 let latestPreviewRequest = 0
-const pendingPreviewReloadTimers: number[] = []
 const visualEditor = createVisualEditor({
   onSelect: (payload) => {
     selectedElementInfo.value = payload
@@ -400,11 +420,11 @@ const appendMessage = (role: 'user' | 'assistant', content: string) => {
   })
 }
 
-const appendAssistantPlaceholder = () => {
+const appendAssistantPlaceholder = (content = '') => {
   const nextMessage: ChatMessage = {
     id: `assistant-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     role: 'assistant',
-    content: '',
+    content,
     createdAt: new Date().toISOString(),
   }
   messages.value.push(nextMessage)
@@ -430,6 +450,37 @@ const scrollMessagesToBottom = async (behavior: ScrollBehavior = 'smooth') => {
     top: container.scrollHeight,
     behavior,
   })
+}
+
+/** 根据用户当前滚动位置决定是否继续自动跟随；主动向上查看历史时暂停跟随。 */
+const handleMessageListScroll = () => {
+  const container = messageListRef.value
+  if (!container) {
+    return
+  }
+  const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+  shouldFollowMessages = distanceToBottom <= STREAM_SCROLL_BOTTOM_THRESHOLD_PX
+}
+
+/** 生成期间将自动滚动限制为每 200ms 至多一次，避免高频流式更新堆叠动画。 */
+const scheduleStreamingScroll = () => {
+  if (!shouldFollowMessages || messageScrollTimer !== null) {
+    return
+  }
+  messageScrollTimer = window.setTimeout(() => {
+    messageScrollTimer = null
+    if (streaming.value && shouldFollowMessages) {
+      void scrollMessagesToBottom('auto')
+    }
+  }, STREAM_SCROLL_INTERVAL_MS)
+}
+
+const clearMessageScrollTimer = () => {
+  if (messageScrollTimer === null) {
+    return
+  }
+  window.clearTimeout(messageScrollTimer)
+  messageScrollTimer = null
 }
 
 const clampPanelRatio = (value: number) =>
@@ -595,11 +646,14 @@ const buildPreviewSrcDoc = (html: string, baseUrl: string, token: number) => {
   return `<!doctype html>\n${doc.documentElement.outerHTML}`
 }
 
+/**
+ * 获取并替换完整预览文档；请求失败时保留当前 srcdoc，不再用定时跳转覆盖可用旧版本。
+ */
 const loadPreviewDocument = async () => {
   if (!previewUrl.value) {
     previewSrcDoc.value = ''
     previewLoading.value = false
-    return
+    return false
   }
 
   if (visualEditMode.value) {
@@ -627,52 +681,30 @@ const loadPreviewDocument = async () => {
 
     const html = await response.text()
     if (requestId !== latestPreviewRequest) {
-      return
+      return false
     }
 
     previewSrcDoc.value = buildPreviewSrcDoc(html, previewUrl.value, token)
     previewRenderKey.value += 1
+    return true
   } catch {
     if (requestId !== latestPreviewRequest) {
-      return
+      return false
     }
-
-    previewSrcDoc.value = `
-      <!doctype html>
-      <html>
-        <head>
-          <base href="${previewUrl.value}" />
-          <meta http-equiv="refresh" content="0;url=${sourceUrl}" />
-        </head>
-        <body></body>
-      </html>
-    `
-    previewRenderKey.value += 1
     previewLoading.value = false
+    message.warning('最新预览加载失败，已保留上一版内容，请点击“刷新预览”重试。')
+    return false
   }
 }
 
-const schedulePreviewReloads = (delays = [600, 1600, 3200, 5200, 8200, 12000]) => {
-  pendingPreviewReloadTimers.splice(0).forEach((timer) => window.clearTimeout(timer))
-  delays.forEach((delay) => {
-    const timer = window.setTimeout(() => {
-      if (!streaming.value && showPreview.value) {
-        void loadPreviewDocument()
-      }
-    }, delay)
-    pendingPreviewReloadTimers.push(timer)
-  })
-}
-
-const finalizePreview = () => {
+/** 根据最新应用和历史状态同步预览地址；本方法不发起网络请求，生成期间旧 iframe 保持挂载。 */
+const syncPreviewState = () => {
   if (visualEditMode.value) {
     visualEditor.attachToIframe(null)
   }
   previewUrl.value = buildLocalPreviewUrl(appDetail.value?.id, appDetail.value?.codeGenType)
   showPreview.value = Boolean(previewUrl.value) && loadedHistoryCount.value >= 2
-  if (showPreview.value) {
-    void loadPreviewDocument()
-  } else {
+  if (!showPreview.value) {
     previewSrcDoc.value = ''
     previewLoading.value = false
   }
@@ -682,20 +714,26 @@ const finalizePreview = () => {
   }
 }
 
+const previewRefreshCoordinator = createPreviewRefreshCoordinator(async () => {
+  syncPreviewState()
+  if (showPreview.value) {
+    await loadPreviewDocument()
+  }
+})
+
 const resetHistoryState = () => {
   historyRecords.value = []
   messages.value = []
   loadedHistoryCount.value = 0
   historyCursor.value = undefined
   hasMoreHistory.value = false
-  finalizePreview()
+  syncPreviewState()
 }
 
 const rebuildMessagesFromHistory = (records: ChatHistory[]) => {
   historyRecords.value = sortChatHistoryAsc(records)
   messages.value = historyRecords.value.map(mapChatHistoryToMessage)
   loadedHistoryCount.value = historyRecords.value.length
-  finalizePreview()
 }
 
 const mergeHistoryRecords = (currentRecords: ChatHistory[], nextRecords: ChatHistory[]) => {
@@ -711,7 +749,19 @@ const closeStream = () => {
   currentEventSource = null
 }
 
+const disposeStreamProgress = (finish = false) => {
+  if (finish) {
+    currentStreamProgress?.finish()
+  } else {
+    currentStreamProgress?.dispose()
+  }
+  currentStreamProgress = null
+  clearMessageScrollTimer()
+}
+
 const resetPageState = () => {
+  generationRunId += 1
+  disposeStreamProgress()
   closeStream()
   autoSendingInitPrompt.value = false
   deploying.value = false
@@ -838,48 +888,93 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
   }
   exitVisualEditMode()
   streaming.value = true
+  shouldFollowMessages = true
   autoSendingInitPrompt.value = Boolean(options.isAutoInit)
-  finalizePreview()
 
-  const assistantMessageId = appendAssistantPlaceholder()
+  const assistantMessageId = appendAssistantPlaceholder('正在生成，已接收 0 个字符')
+  const runId = ++generationRunId
+  const previewRequestKey = String(runId)
+  previewRefreshCoordinator.begin(previewRequestKey)
 
+  disposeStreamProgress()
   closeStream()
+  currentStreamProgress = createGenerationStreamProgress({
+    intervalMs: STREAM_PROGRESS_INTERVAL_MS,
+    schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    cancelSchedule: (handle) => window.clearTimeout(handle),
+    onFlush: ({ receivedCharacters, elapsedMs }) => {
+      if (runId !== generationRunId) {
+        return
+      }
+      const elapsedSeconds = (elapsedMs / 1000).toFixed(1)
+      updateMessageContent(
+        assistantMessageId,
+        () => `正在生成，已接收 ${receivedCharacters} 个字符，已用时 ${elapsedSeconds} 秒`,
+      )
+    },
+  })
 
   currentEventSource = chatToGenCodeStream({
     appId: activeAppId.value,
     message: content,
     onMessage: (chunk) => {
-      updateMessageContent(assistantMessageId, (current) => current + chunk)
+      if (runId === generationRunId) {
+        currentStreamProgress?.push(chunk)
+      }
     },
     onDone: async () => {
+      if (runId !== generationRunId) {
+        return
+      }
+      disposeStreamProgress(true)
+      currentEventSource = null
       streaming.value = false
       autoSendingInitPrompt.value = false
       await loadAppDetail()
       await loadHistoryPage(false)
-      finalizePreview()
-      schedulePreviewReloads()
+      // 后端发布完成并发出 done 后，当前轮次只允许刷新一次；不再依赖定时猜测构建时机。
+      await previewRefreshCoordinator.complete(previewRequestKey)
       if (!options.silentSuccess) {
-        message.success('本轮生成完成，右侧预览已更新')
+        message.success('本轮生成完成')
       }
     },
     onBusinessError: (errorData) => {
+      if (runId !== generationRunId) {
+        return
+      }
+      disposeStreamProgress()
+      currentEventSource = null
       streaming.value = false
       autoSendingInitPrompt.value = false
-      const errorMessage = errorData.message || '生成过程中出现错误'
+      previewRefreshCoordinator.fail(previewRequestKey)
+      const knownErrorMessages: Record<string, string> = {
+        MODEL_OUTPUT_TRUNCATED: '模型输出不完整，本轮未发布，请缩小修改范围后重试。',
+        HTML_FORMAT_INVALID: 'HTML 输出格式不完整，本轮未发布，请重试。',
+        HTML_VALIDATION_FAILED: 'HTML 完整性校验未通过，本轮未发布，请重试。',
+        HTML_SMOKE_TEST_FAILED: '页面运行检查未通过，本轮未发布，请调整需求后重试。',
+      }
+      const errorMessage =
+        (errorData.errorCode && knownErrorMessages[errorData.errorCode]) ||
+        errorData.message ||
+        '生成过程中出现错误'
+      const requestHint = errorData.requestId ? `（请求 ID：${errorData.requestId}）` : ''
 
-      updateMessageContent(assistantMessageId, () => `❌ ${errorMessage}`)
-      message.error(errorMessage)
+      updateMessageContent(assistantMessageId, () => `${errorMessage}${requestHint}`)
+      message.error(`${errorMessage}${requestHint}`)
     },
     onError: () => {
+      if (runId !== generationRunId) {
+        return
+      }
+      disposeStreamProgress()
+      currentEventSource = null
       streaming.value = false
       autoSendingInitPrompt.value = false
-      const targetMessage = messages.value.find((item) => item.id === assistantMessageId)
-      if (!targetMessage?.content.trim()) {
-        updateMessageContent(
-          assistantMessageId,
-          () => '生成过程被中断，请稍后重试，或补充更明确的描述。',
-        )
-      }
+      previewRefreshCoordinator.fail(previewRequestKey)
+      updateMessageContent(
+        assistantMessageId,
+        () => '生成过程被中断，请稍后重试，或补充更明确的描述。',
+      )
 
       if (options.isAutoInit) {
         message.warning('首轮自动生成未完成，你可以继续在当前页面发送更具体的需求。')
@@ -888,6 +983,24 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       }
     },
   })
+}
+
+/** 主动停止当前生成并清理本地进度；关闭 SSE 会触发后端协作式取消，旧预览保持不变。 */
+const stopGeneration = () => {
+  if (!streaming.value) {
+    return
+  }
+  previewRefreshCoordinator.fail(String(generationRunId))
+  generationRunId += 1
+  disposeStreamProgress()
+  closeStream()
+  streaming.value = false
+  autoSendingInitPrompt.value = false
+  const target = messages.value[messages.value.length - 1]
+  if (target?.role === 'assistant') {
+    target.content = '已停止本轮生成，上一版预览保持不变。'
+  }
+  message.info('已停止生成')
 }
 
 const handlePressEnter = (event: KeyboardEvent) => {
@@ -1017,9 +1130,9 @@ const handleExportMarkdown = async () => {
   }
 }
 
+/** 将当前应用生成类型对应的优化要求填入输入框，不直接触发生成。 */
 const useOptimizePrompt = () => {
-  inputMessage.value =
-    '请在保留当前功能的基础上，优化排版层次、突出关键信息，并补全更完整的交互细节。'
+  inputMessage.value = buildOptimizePrompt(appDetail.value?.codeGenType)
 }
 
 const tryAutoSendInitPrompt = async () => {
@@ -1057,7 +1170,10 @@ const initializePage = async () => {
   if (requestId !== initializeRequestId) {
     return
   }
-  finalizePreview()
+  syncPreviewState()
+  if (showPreview.value) {
+    await loadPreviewDocument()
+  }
 
   if (route.query.mode === 'create') {
     await router.replace(`/apps/${routeAppId.value}/chat`)
@@ -1082,9 +1198,14 @@ watch(
     messages.value[messages.value.length - 1]?.content ?? '',
     streaming.value,
   ],
-  async (_, previousValue) => {
-    const nextBehavior = previousValue ? 'smooth' : 'auto'
-    await scrollMessagesToBottom(nextBehavior)
+  async () => {
+    if (streaming.value) {
+      scheduleStreamingScroll()
+      return
+    }
+    if (shouldFollowMessages) {
+      await scrollMessagesToBottom('smooth')
+    }
   },
 )
 
@@ -1101,9 +1222,11 @@ watch(showResizableSplit, (value) => {
 })
 
 onBeforeUnmount(() => {
-  pendingPreviewReloadTimers.splice(0).forEach((timer) => window.clearTimeout(timer))
+  previewRefreshCoordinator.dispose()
   window.removeEventListener('resize', updateWindowWidth)
   stopResizePanels()
+  generationRunId += 1
+  disposeStreamProgress()
   closeStream()
   visualEditor.destroy()
 })

@@ -85,7 +85,9 @@ export interface ChatGenCodeChunk {
 export interface ChatGenCodeBusinessError {
   error?: boolean
   code?: number
+  errorCode?: string
   message?: string
+  requestId?: string
 }
 
 export interface ChatToGenCodeStreamOptions {
