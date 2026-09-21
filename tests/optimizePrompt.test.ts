@@ -28,3 +28,17 @@ test('unknown or missing type uses minimal changes without an invented output pr
     assert.doesNotMatch(prompt, /闭合的 html 代码块|三文件协议/)
   }
 })
+
+test('all optimization prompts preserve existing business images', () => {
+  for (const type of ['HTML', 'MULTI_FILE', 'VUE_PROJECT', undefined]) {
+    const prompt = buildOptimizePrompt(type)
+    assert.match(prompt, /保留现有全部图片/)
+    assert.match(prompt, /不得删除图片/)
+    assert.match(prompt, /不得替换为随机图/)
+  }
+})
+
+test('HTML prompt forbids explanations outside the artifact', () => {
+  const prompt = buildOptimizePrompt('HTML')
+  assert.match(prompt, /代码块外不得输出标题、解释或总结/)
+})

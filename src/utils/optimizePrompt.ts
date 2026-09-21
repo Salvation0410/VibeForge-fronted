@@ -4,14 +4,20 @@ const MULTI_FILE_PROMPT = '请基于当前应用的完整代码优化页面。�
 
 const VUE_PROMPT = '请在当前 Vue 工程内优化页面。必须保留现有路由、组件职责、业务功能、数据内容和交互逻辑，只修改完成本次视觉与体验优化所必需的文件；不要重建工程、替换技术栈、引入无关依赖、模块、动画或模拟数据。优先复用现有组件和样式约定，确保修改后项目能够正常构建，并完整完成所有必要文件修改。'
 
-/** 根据生成类型提供优化意图；未知类型只要求最小修改，不推断产物输出协议。 */
+const MEDIA_PRESERVATION_PROMPT = '必须保留现有全部图片、图片地址、CSS 背景图和业务媒体数据；不得删除图片，不得替换为随机图、占位图或无关外链。允许调整图片尺寸、裁剪方式、响应式布局、懒加载和加载失败状态；原图片无法访问时仍保留原引用，不得伪造替代内容。'
+
+/** 根据生成类型提供优化意图，并统一约束模型不得在视觉优化时静默删除业务图片。 */
 export function buildOptimizePrompt(codeGenType?: string): string {
+  let typePrompt: string
   switch (codeGenType?.toUpperCase()) {
     case 'HTML':
-      return HTML_PROMPT
+      typePrompt = HTML_PROMPT
+      break
     case 'MULTI_FILE':
-      return MULTI_FILE_PROMPT
+      typePrompt = MULTI_FILE_PROMPT
+      break
     default:
-      return VUE_PROMPT
+      typePrompt = VUE_PROMPT
   }
+  return `${typePrompt}${MEDIA_PRESERVATION_PROMPT}`
 }

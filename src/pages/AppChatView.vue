@@ -77,8 +77,6 @@
               <pre class="message-content">{{ messageItem.content || ' ' }}</pre>
             </div>
           </div>
-
-          <div v-if="streaming" class="streaming-tip">AI 正在持续生成代码和说明，请稍候...</div>
         </div>
 
         <div class="composer">
@@ -1445,11 +1443,6 @@ onBeforeUnmount(() => {
   font-family: inherit;
   color: #1d2b43;
   line-height: 1.75;
-}
-
-.streaming-tip {
-  color: #1484b1;
-  font-size: 13px;
 }
 
 .composer {
