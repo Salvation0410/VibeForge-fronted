@@ -1,10 +1,12 @@
 export interface GenerationProgressSnapshot {
   receivedCharacters: number
   elapsedMs: number
+  visibleContent: string
 }
 
 export interface GenerationStreamProgressOptions<TScheduleHandle> {
   intervalMs: number
+  maxVisibleCharacters: number
   schedule: (callback: () => void, delayMs: number) => TScheduleHandle
   cancelSchedule: (handle: TScheduleHandle) => void
   onFlush: (snapshot: GenerationProgressSnapshot) => void
@@ -18,11 +20,12 @@ export interface GenerationStreamProgress {
 }
 
 /**
- * 仅累计流式响应的字符数并按固定窗口发布轻量进度；源码分片刻意不拼接、不进入 Vue
- * 响应式状态，避免长文本在每个 token 到达时反复复制和触发整段 DOM 更新。
+ * 在 Vue 响应式状态之外累计流式响应，只按固定间隔发布总字符数和有限长度的文本尾部。
+ * 这样用户能实时看到内容，同时避免完整源码在每个分片到达时反复复制和渲染。
  */
 export function createGenerationStreamProgress<TScheduleHandle>({
   intervalMs,
+  maxVisibleCharacters,
   schedule,
   cancelSchedule,
   onFlush,
@@ -30,6 +33,7 @@ export function createGenerationStreamProgress<TScheduleHandle>({
 }: GenerationStreamProgressOptions<TScheduleHandle>): GenerationStreamProgress {
   const startedAt = now()
   let receivedCharacters = 0
+  let visibleContent = ''
   let pendingHandle: TScheduleHandle | undefined
   let hasPendingHandle = false
   let dirty = false
@@ -46,6 +50,7 @@ export function createGenerationStreamProgress<TScheduleHandle>({
     onFlush({
       receivedCharacters,
       elapsedMs: Math.max(0, now() - startedAt),
+      visibleContent,
     })
   }
 
@@ -59,12 +64,14 @@ export function createGenerationStreamProgress<TScheduleHandle>({
   }
 
   return {
-    /** 累加字符数；同一批处理窗口内无论收到多少分片都只安排一次 UI 更新。 */
+    /** 累计总字符数并保留最新文本尾部；同一刷新窗口内收到再多分片也只安排一次 UI 更新。 */
     push(chunk) {
       if (disposed || !chunk) {
         return
       }
       receivedCharacters += chunk.length
+      const chunkTail = chunk.slice(-maxVisibleCharacters)
+      visibleContent = `${visibleContent}${chunkTail}`.slice(-maxVisibleCharacters)
       dirty = true
       if (hasPendingHandle) {
         return
