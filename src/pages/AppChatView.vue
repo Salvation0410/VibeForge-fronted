@@ -1541,6 +1541,8 @@ onBeforeUnmount(() => {
 
 .preview-spinner {
   position: relative;
+  flex: 0 0 auto;
+  aspect-ratio: 1;
   width: 72px;
   height: 72px;
   border-radius: 50%;
