@@ -92,14 +92,14 @@
           <a-textarea
             v-model:value="inputMessage"
             :auto-size="{ minRows: 3, maxRows: 6 }"
-            :disabled="!canOperate"
+            :disabled="!canOperate || generationUiState !== 'idle'"
             placeholder="描述越详细，页面越具体，可以一步步完善生成效果"
             @pressEnter="handlePressEnter"
           />
           <div class="composer-actions">
             <span class="status-text">{{ statusText }}</span>
             <a-space>
-              <a-button :disabled="streaming || !canOperate" @click="useOptimizePrompt"
+              <a-button :disabled="generationUiState !== 'idle' || !canOperate" @click="useOptimizePrompt"
                 >优化提示</a-button
               >
               <a-button
@@ -111,17 +111,18 @@
                 {{ visualEditMode ? '退出可视化编辑' : '可视化编辑' }}
               </a-button>
               <a-button
-                v-if="streaming"
+                v-if="generationUiState !== 'idle'"
                 danger
-                :disabled="!canOperate"
+                :disabled="!canOperate || generationUiState === 'stopping'"
+                :loading="generationUiState === 'stopping'"
                 @click="stopGeneration"
               >
-                停止生成
+                {{ generationUiState === 'stopping' ? '正在停止' : '停止生成' }}
               </a-button>
               <a-button
                 v-else
                 type="primary"
-                :disabled="!canOperate"
+                :disabled="!canOperate || generationUiState !== 'idle'"
                 @click="sendMessage()"
               >
                 发送消息
@@ -199,7 +200,16 @@
             </div>
           </template>
 
-          <a-empty v-else description="发送需求后，右侧将在当前轮生成完成后自动展示网站预览。" />
+          <div v-else-if="showTruncatedPreviewState" class="preview-state preview-state--failure">
+            <div class="preview-state-copy">
+              <h3>本轮生成未完成</h3>
+              <p>生成内容达到模型输出上限，预览未更新。请减少页面模块，或拆分为多次生成后重试。</p>
+            </div>
+          </div>
+
+          <div v-else class="preview-empty-state">
+            <a-empty description="发送需求后，右侧将在当前轮生成完成后自动展示网站预览。" />
+          </div>
         </div>
       </a-card>
     </div>
@@ -241,10 +251,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   type AppId,
+  cancelAppGeneration,
   chatToGenCodeStream,
   deployApp,
   downloadAppCode,
   getAppDetail,
+  getAppGenerationStatus,
   type AppVO,
 } from '@/api/app'
 import {
@@ -261,6 +273,12 @@ import {
   type GenerationStreamProgress,
 } from '@/utils/generationStreamProgress'
 import { createPreviewRefreshCoordinator } from '@/utils/previewRefreshCoordinator'
+import {
+  generationStatusPollDelay,
+  isTruncatedWithoutPreview,
+  resolveGenerationUiState,
+  type GenerationUiState,
+} from '@/utils/generationLifecycle'
 import { mapChatHistoryToMessage, sortChatHistoryAsc, type ChatMessage } from '@/utils/chatHistory'
 import {
   downloadBlobFile,
@@ -300,6 +318,8 @@ const workspaceGridRef = ref<HTMLElement | null>(null)
 const messageListRef = ref<HTMLElement | null>(null)
 const previewFrameRef = ref<HTMLIFrameElement | null>(null)
 const streaming = ref(false)
+const generationUiState = ref<GenerationUiState>('idle')
+const previewFailureCode = ref<string>()
 const deploying = ref(false)
 const exporting = ref(false)
 const downloadingCode = ref(false)
@@ -326,6 +346,7 @@ const isResizingPanels = ref(false)
 let currentEventSource: EventSource | null = null
 let currentStreamProgress: GenerationStreamProgress | null = null
 let generationRunId = 0
+let generationStopId = 0
 let messageScrollTimer: number | null = null
 let shouldFollowMessages = true
 let latestPreviewRequest = 0
@@ -365,6 +386,9 @@ const showEmptyState = computed(
     !shouldAutoSendInitPrompt.value,
 )
 const hasGeneratedPreview = computed(() => showPreview.value && Boolean(previewUrl.value))
+const showTruncatedPreviewState = computed(() =>
+  isTruncatedWithoutPreview(previewFailureCode.value, hasGeneratedPreview.value),
+)
 const showPreviewGeneratingState = computed(() => streaming.value && !hasGeneratedPreview.value)
 const showPreviewGeneratingOverlay = computed(() => streaming.value && hasGeneratedPreview.value)
 const showPreviewOverlay = computed(
@@ -382,14 +406,18 @@ const workspaceGridStyle = computed(() => {
   }
 })
 const previewStateTitle = computed(() =>
-  previewLoading.value
+  generationUiState.value === 'stopping'
+    ? '正在停止本轮生成'
+    : previewLoading.value
     ? '预览资源加载中'
     : autoSendingInitPrompt.value || !hasGeneratedPreview.value
       ? 'AI 正在生成首版页面'
       : 'AI 正在更新当前预览',
 )
 const previewStateDescription = computed(() =>
-  previewLoading.value
+  generationUiState.value === 'stopping'
+    ? '后台正在安全结束模型调用和构建任务，确认完成前暂不能开始新一轮生成。'
+    : previewLoading.value
     ? '后端正在准备最新的构建产物，加载完成后右侧会自动展示页面预览。'
     : autoSendingInitPrompt.value || !hasGeneratedPreview.value
       ? '正在根据当前需求整理代码与页面结构，等待本轮输出完成后会自动显示右侧预览。'
@@ -401,6 +429,9 @@ const statusText = computed(() => {
     return '当前为只读查看模式，可浏览应用历史和预览效果。'
   }
   if (streaming.value) {
+    if (generationUiState.value === 'stopping') {
+      return '正在停止后台任务，确认结束后才能继续发送。'
+    }
     return autoSendingInitPrompt.value
       ? 'AI 正在根据你的需求启动首轮生成'
       : 'AI 正在实时输出生成结果'
@@ -761,6 +792,7 @@ const disposeStreamProgress = (finish = false) => {
 
 const resetPageState = () => {
   generationRunId += 1
+  generationStopId += 1
   disposeStreamProgress()
   closeStream()
   autoSendingInitPrompt.value = false
@@ -770,6 +802,9 @@ const resetPageState = () => {
   detailVisible.value = false
   appDetail.value = null
   inputMessage.value = ''
+  generationUiState.value = 'idle'
+  streaming.value = false
+  previewFailureCode.value = undefined
   deployedUrl.value = ''
   selectedElementInfo.value = null
   historyInitialized.value = false
@@ -876,7 +911,7 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
     message.warning('当前应用仅支持查看，无法继续生成')
     return
   }
-  if (streaming.value) {
+  if (generationUiState.value !== 'idle') {
     return
   }
 
@@ -887,6 +922,8 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
     inputMessage.value = ''
   }
   exitVisualEditMode()
+  previewFailureCode.value = undefined
+  generationUiState.value = 'running'
   streaming.value = true
   shouldFollowMessages = true
   autoSendingInitPrompt.value = Boolean(options.isAutoInit)
@@ -920,17 +957,18 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
     appId: activeAppId.value,
     message: content,
     onMessage: (chunk) => {
-      if (runId === generationRunId) {
+      if (runId === generationRunId && generationUiState.value === 'running') {
         currentStreamProgress?.push(chunk)
       }
     },
     onDone: async () => {
-      if (runId !== generationRunId) {
+      if (runId !== generationRunId || generationUiState.value === 'stopping') {
         return
       }
       disposeStreamProgress(true)
       currentEventSource = null
       streaming.value = false
+      generationUiState.value = 'idle'
       autoSendingInitPrompt.value = false
       await loadAppDetail()
       await loadHistoryPage(false)
@@ -941,16 +979,18 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       }
     },
     onBusinessError: (errorData) => {
-      if (runId !== generationRunId) {
+      if (runId !== generationRunId || generationUiState.value === 'stopping') {
         return
       }
       disposeStreamProgress()
       currentEventSource = null
       streaming.value = false
+      generationUiState.value = 'idle'
       autoSendingInitPrompt.value = false
       previewRefreshCoordinator.fail(previewRequestKey)
       const knownErrorMessages: Record<string, string> = {
-        MODEL_OUTPUT_TRUNCATED: '模型输出不完整，本轮未发布，请缩小修改范围后重试。',
+        MODEL_OUTPUT_TRUNCATED:
+          '生成内容达到模型输出上限，本轮结果未发布。请减少页面模块，或拆分为多次生成后重试。',
         HTML_FORMAT_INVALID: 'HTML 输出格式不完整，本轮未发布，请重试。',
         HTML_VALIDATION_FAILED: 'HTML 完整性校验未通过，本轮未发布，请重试。',
         HTML_SMOKE_TEST_FAILED: '页面运行检查未通过，本轮未发布，请调整需求后重试。',
@@ -960,17 +1000,19 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
         errorData.message ||
         '生成过程中出现错误'
       const requestHint = errorData.requestId ? `（请求 ID：${errorData.requestId}）` : ''
+      previewFailureCode.value = errorData.errorCode
 
       updateMessageContent(assistantMessageId, () => `${errorMessage}${requestHint}`)
       message.error(`${errorMessage}${requestHint}`)
     },
     onError: () => {
-      if (runId !== generationRunId) {
+      if (runId !== generationRunId || generationUiState.value === 'stopping') {
         return
       }
       disposeStreamProgress()
       currentEventSource = null
       streaming.value = false
+      generationUiState.value = 'idle'
       autoSendingInitPrompt.value = false
       previewRefreshCoordinator.fail(previewRequestKey)
       updateMessageContent(
@@ -987,22 +1029,88 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
   })
 }
 
-/** 主动停止当前生成并清理本地进度；关闭 SSE 会触发后端协作式取消，旧预览保持不变。 */
-const stopGeneration = () => {
-  if (!streaming.value) {
+const waitForGenerationIdle = async (stopId: number, committing: boolean) => {
+  let attempt = 0
+  let warned = false
+  while (stopId === generationStopId && generationUiState.value === 'stopping') {
+    try {
+      const response = await getAppGenerationStatus(activeAppId.value)
+      if (!isSuccessCode(response.code) || !response.data) {
+        throw new Error(response.message || '查询停止状态失败')
+      }
+      generationUiState.value = resolveGenerationUiState(
+        response.data.state,
+        generationUiState.value,
+      )
+      if (generationUiState.value === 'idle') {
+        streaming.value = false
+        autoSendingInitPrompt.value = false
+        await loadAppDetail()
+        await loadHistoryPage(false)
+        if (committing) {
+          syncPreviewState()
+          if (showPreview.value) await loadPreviewDocument()
+          message.info('本轮已进入发布阶段，最新结果已完成同步。')
+        } else {
+          const target = messages.value[messages.value.length - 1]
+          if (target?.role === 'assistant') {
+            target.content = '本轮生成已停止，上一版预览保持不变。'
+          }
+          message.info('后台任务已停止')
+        }
+        return
+      }
+    } catch {
+      if (!warned) {
+        warned = true
+        message.warning('仍在确认后台停止状态，请稍候。')
+      }
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, generationStatusPollDelay(attempt++)))
+  }
+}
+
+/** 主动请求后端停止，并保持 stopping 状态直到权威状态回到 IDLE。 */
+const stopGeneration = async () => {
+  if (generationUiState.value !== 'running' || !activeAppId.value) {
     return
   }
+  generationUiState.value = 'stopping'
   previewRefreshCoordinator.fail(String(generationRunId))
-  generationRunId += 1
-  disposeStreamProgress()
-  closeStream()
-  streaming.value = false
-  autoSendingInitPrompt.value = false
   const target = messages.value[messages.value.length - 1]
   if (target?.role === 'assistant') {
-    target.content = '已停止本轮生成，上一版预览保持不变。'
+    target.content = '正在停止本轮生成，请稍候……'
   }
-  message.info('已停止生成')
+
+  const stopId = ++generationStopId
+  try {
+    const response = await cancelAppGeneration(activeAppId.value)
+    if (!isSuccessCode(response.code) || !response.data) {
+      throw new Error(response.message || '停止生成失败')
+    }
+    generationRunId += 1
+    disposeStreamProgress()
+    closeStream()
+    generationUiState.value = resolveGenerationUiState(response.data.state, generationUiState.value)
+    if (generationUiState.value === 'idle') {
+      streaming.value = false
+      autoSendingInitPrompt.value = false
+      await loadAppDetail()
+      await loadHistoryPage(false)
+      syncPreviewState()
+      if (showPreview.value) await loadPreviewDocument()
+      if (target?.role === 'assistant') {
+        target.content = '本轮生成已结束，当前状态已同步。'
+      }
+      message.info('后台任务已结束')
+      return
+    }
+    await waitForGenerationIdle(stopId, response.data.state === 'COMMITTING')
+  } catch (error) {
+    if (stopId !== generationStopId) return
+    generationUiState.value = 'running'
+    message.error(error instanceof Error ? error.message : '停止生成失败，请重试')
+  }
 }
 
 const handlePressEnter = (event: KeyboardEvent) => {
@@ -1228,6 +1336,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateWindowWidth)
   stopResizePanels()
   generationRunId += 1
+  generationStopId += 1
   disposeStreamProgress()
   closeStream()
   visualEditor.destroy()
@@ -1537,6 +1646,19 @@ onBeforeUnmount(() => {
   color: #68809d;
   font-size: 15px;
   line-height: 1.8;
+}
+
+.preview-empty-state {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: calc(100vh - 340px);
+  padding: 32px;
+  text-align: center;
+}
+
+.preview-state--failure {
+  background: linear-gradient(180deg, rgba(255, 247, 230, 0.66), rgba(255, 255, 255, 0.94));
 }
 
 .preview-spinner {

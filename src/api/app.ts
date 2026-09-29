@@ -90,6 +90,14 @@ export interface ChatGenCodeBusinessError {
   requestId?: string
 }
 
+export type AppGenerationState = 'IDLE' | 'RUNNING' | 'STOPPING' | 'COMMITTING'
+
+export interface AppGenerationStatus {
+  appId: AppId
+  requestId?: string
+  state: AppGenerationState
+}
+
 export interface ChatToGenCodeStreamOptions {
   appId: AppId
   message: string
@@ -200,6 +208,18 @@ export function downloadAppCode(appId: AppId): Promise<AxiosResponse<Blob>> {
   })
 }
 
+export function cancelAppGeneration(appId: AppId): Promise<BaseResponse<AppGenerationStatus>> {
+  return appRequest
+    .post<BaseResponse<AppGenerationStatus>>('/apps/chat/gen/code/cancel', { appId })
+    .then(unwrapResponse)
+}
+
+export function getAppGenerationStatus(appId: AppId): Promise<BaseResponse<AppGenerationStatus>> {
+  return appRequest
+    .get<BaseResponse<AppGenerationStatus>>('/apps/chat/gen/code/status', { params: { appId } })
+    .then(unwrapResponse)
+}
+
 /**
  * SSE code generation.
  *
@@ -292,6 +312,8 @@ const appApi = {
   getAppDetailByAdmin,
   deployApp,
   downloadAppCode,
+  cancelAppGeneration,
+  getAppGenerationStatus,
   chatToGenCodeStream,
 }
 
