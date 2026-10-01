@@ -13,7 +13,7 @@
             ref="fileInputRef"
             class="visually-hidden"
             type="file"
-            accept=".pdf,.docx,.md,.markdown,.txt"
+            accept=".pdf,.docx,.md,.txt"
             @change="handleFileChange"
           />
           <a-button :disabled="uploading" @click="chooseFile">选择文件</a-button>
@@ -38,7 +38,7 @@
             取消选择
           </a-button>
         </template>
-        <span v-else>支持 PDF、DOCX、MD、MARKDOWN、TXT，单个文件不超过 20 MiB。</span>
+        <span v-else>支持 PDF、DOCX、MD、TXT，单个文件不超过 20 MiB。</span>
       </div>
     </a-card>
 
@@ -94,7 +94,14 @@
 
           <template v-else-if="column.key === 'action'">
             <a-space wrap>
-              <a-button type="link" @click="openTasks(record)">ETL 历史</a-button>
+              <a-button
+                type="link"
+                :loading="isTaskLoading(record.id)"
+                :disabled="isTaskLoading(record.id)"
+                @click="openTasks(record)"
+              >
+                ETL 历史
+              </a-button>
               <a-button
                 v-if="canRetryCustomerServiceKnowledgeDocument(record.status)"
                 type="link"
@@ -195,10 +202,13 @@ import {
   type CustomerServiceKnowledgeHealth,
   type CustomerServiceKnowledgeId,
   type CustomerServiceKnowledgeTask,
+  type CustomerServicePageResult,
 } from '@/api/customerService'
 import { formatDateTime, isSuccessCode } from '@/utils/appUtils'
 import {
   canRetryCustomerServiceKnowledgeDocument,
+  createCustomerServiceLatestRequestController,
+  createCustomerServiceOperationGuard,
   getCustomerServiceDocumentStatus,
   getCustomerServiceTaskStatus,
   normalizeCustomerServiceErrorCode,
@@ -221,7 +231,6 @@ const columns: TableProps['columns'] = [
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const uploading = ref(false)
-const rebuilding = ref(false)
 const listLoading = ref(false)
 const documents = ref<CustomerServiceKnowledgeDocument[]>([])
 const health = ref<CustomerServiceKnowledgeHealth>({
@@ -233,6 +242,7 @@ const operations = ref(new Set<string>())
 const tasksOpen = ref(false)
 const tasksLoading = ref(false)
 const tasks = ref<CustomerServiceKnowledgeTask[]>([])
+let disposed = false
 
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 })
 
@@ -241,6 +251,11 @@ const healthItems = computed(() => [
   { key: 'coordinator', label: '任务协调器', ready: health.value.coordinator },
   { key: 'python', label: 'AI ETL 服务', ready: health.value.python },
 ])
+
+const operationGuard = createCustomerServiceOperationGuard((keys) => {
+  operations.value = new Set(keys)
+})
+const rebuilding = computed(() => operations.value.has('rebuild'))
 
 function documentStatus(status?: string | null) {
   return getCustomerServiceDocumentStatus(status)
@@ -266,23 +281,16 @@ function operationKey(id: CustomerServiceKnowledgeId, action: DocumentAction) {
   return `${id}:${action}`
 }
 
-function setOperating(id: CustomerServiceKnowledgeId, action: DocumentAction, active: boolean) {
-  const next = new Set(operations.value)
-  const key = operationKey(id, action)
-  if (active) {
-    next.add(key)
-  } else {
-    next.delete(key)
-  }
-  operations.value = next
-}
-
 function isOperating(id: CustomerServiceKnowledgeId, action: DocumentAction) {
   return operations.value.has(operationKey(id, action))
 }
 
 function hasDocumentOperation(id: CustomerServiceKnowledgeId) {
   return Array.from(operations.value).some((key) => key.startsWith(`${id}:`))
+}
+
+function isTaskLoading(id: CustomerServiceKnowledgeId) {
+  return operations.value.has(`tasks:${id}`)
 }
 
 function chooseFile() {
@@ -307,40 +315,100 @@ function handleFileChange(event: Event) {
   selectedFile.value = file
 }
 
-async function loadDocuments() {
-  if (listLoading.value) return
-  listLoading.value = true
-  try {
-    const [pageResult, healthResult] = await Promise.allSettled([
-      getCustomerServiceKnowledgePage({
-        pageNum: pagination.current,
-        pageSize: pagination.pageSize,
-      }),
-      getCustomerServiceKnowledgeHealth(),
-    ])
-    if (pageResult.status !== 'fulfilled') {
+const listController = createCustomerServiceLatestRequestController<
+  { pageNum: number; pageSize: number },
+  CustomerServicePageResult<CustomerServiceKnowledgeDocument>
+>({
+  request: async (params: { pageNum: number; pageSize: number }, signal) => {
+    const response = await getCustomerServiceKnowledgePage(params, signal)
+    if (!isSuccessCode(response.code)) {
       throw new Error('knowledge page unavailable')
     }
-    const pageResponse = pageResult.value
-    if (!isSuccessCode(pageResponse.code)) {
-      throw new Error(pageResponse.message || '知识文档加载失败')
+    return response.data
+  },
+  onSuccess: (page) => {
+    documents.value = Array.isArray(page?.records) ? page.records : []
+    pagination.total = Number(page?.totalRow || 0)
+  },
+  onError: () => {
+    message.error('知识文档加载失败，请稍后重试')
+  },
+  onLoadingChange: (loading) => {
+    listLoading.value = loading
+  },
+})
+
+const healthController = createCustomerServiceLatestRequestController<
+  undefined,
+  CustomerServiceKnowledgeHealth
+>({
+  request: async (_params: undefined, signal) => {
+    const response = await getCustomerServiceKnowledgeHealth(signal)
+    if (!isSuccessCode(response.code)) {
+      throw new Error('knowledge health unavailable')
     }
-    documents.value = Array.isArray(pageResponse.data?.records) ? pageResponse.data.records : []
-    pagination.total = Number(pageResponse.data?.totalRow || 0)
-    if (
-      healthResult.status === 'fulfilled' &&
-      isSuccessCode(healthResult.value.code) &&
-      healthResult.value.data
-    ) {
-      health.value = healthResult.value.data
-    } else {
-      health.value = { enabled: false, coordinator: false, python: false }
+    return response.data
+  },
+  onSuccess: (result) => {
+    health.value = result
+  },
+  onError: () => {
+    health.value = { enabled: false, coordinator: false, python: false }
+  },
+})
+
+const uploadController = createCustomerServiceLatestRequestController<
+  File,
+  CustomerServiceKnowledgeDocument
+>({
+  request: async (file: File, signal) => {
+    const response = await uploadCustomerServiceKnowledgeDocument(file, undefined, signal)
+    if (!isSuccessCode(response.code)) {
+      throw new Error('knowledge upload failed')
     }
-  } catch {
-    message.error('知识库信息加载失败，请稍后重试')
-  } finally {
-    listLoading.value = false
-  }
+    return response.data
+  },
+  onSuccess: async () => {
+    message.success('文档已上传，索引任务已提交')
+    pagination.current = 1
+    await loadDocuments()
+  },
+  onError: () => {
+    message.error('文档上传失败，请检查文件后重试')
+  },
+  onLoadingChange: (loading) => {
+    uploading.value = loading
+  },
+})
+
+const tasksController = createCustomerServiceLatestRequestController<
+  { documentId: CustomerServiceKnowledgeId },
+  CustomerServiceKnowledgeTask[]
+>({
+  request: async (params: { documentId: CustomerServiceKnowledgeId }, signal) => {
+    const response = await getCustomerServiceKnowledgeTasks(params.documentId, 20, signal)
+    if (!isSuccessCode(response.code)) {
+      throw new Error('knowledge tasks unavailable')
+    }
+    return response.data
+  },
+  onSuccess: (result) => {
+    tasks.value = Array.isArray(result) ? result : []
+  },
+  onError: () => {
+    message.error('ETL 历史加载失败，请稍后重试')
+  },
+  onLoadingChange: (loading) => {
+    tasksLoading.value = loading
+  },
+})
+
+function loadDocuments() {
+  void healthController.run(undefined)
+  return listController.run({
+    pageNum: pagination.current,
+    pageSize: pagination.pageSize,
+  })
 }
 
 async function handleUpload() {
@@ -353,29 +421,17 @@ async function handleUpload() {
     return
   }
 
-  uploading.value = true
-  try {
-    const response = await uploadCustomerServiceKnowledgeDocument(file)
-    if (!isSuccessCode(response.code)) {
-      throw new Error(response.message || '上传失败')
-    }
-    message.success('文档已上传，索引任务已提交')
-    pagination.current = 1
-    await loadDocuments()
-  } catch {
-    message.error('文档上传失败，请检查文件后重试')
-  } finally {
-    uploading.value = false
-    clearSelectedFile()
-  }
+  const request = uploadController.run(file)
+  clearSelectedFile()
+  await request
 }
 
 async function handleDocumentAction(
   document: CustomerServiceKnowledgeDocument,
   action: Exclude<DocumentAction, 'delete'>,
 ) {
-  if (hasDocumentOperation(document.id)) return
-  setOperating(document.id, action, true)
+  const key = operationKey(document.id, action)
+  if (hasDocumentOperation(document.id) || !operationGuard.acquire(key)) return
   try {
     const actionMap = {
       reindex: reindexCustomerServiceKnowledgeDocument,
@@ -384,19 +440,23 @@ async function handleDocumentAction(
     }
     const response = await actionMap[action](document.id)
     if (!isSuccessCode(response.code)) throw new Error(response.message || '操作失败')
+    if (disposed) return
     message.success(
       action === 'disable' ? '文档已停用' : action === 'enable' ? '文档已启用' : '重试任务已提交',
     )
     await loadDocuments()
   } catch {
-    message.error('操作失败，请稍后重试')
+    if (!disposed) message.error('操作失败，请稍后重试')
   } finally {
-    setOperating(document.id, action, false)
+    operationGuard.release(key)
   }
 }
 
 function confirmDelete(document: CustomerServiceKnowledgeDocument) {
-  if (hasDocumentOperation(document.id)) return
+  const key = operationKey(document.id, 'delete')
+  const confirmationKey = 'destructive-confirmation'
+  const guardKeys = [confirmationKey, key]
+  if (hasDocumentOperation(document.id) || !operationGuard.acquireAll(guardKeys)) return
   Modal.confirm({
     title: '确认删除该知识文档？',
     content: `“${document.name || '未命名文档'}”删除后无法恢复，并会异步清理对应索引。`,
@@ -404,39 +464,42 @@ function confirmDelete(document: CustomerServiceKnowledgeDocument) {
     cancelText: '取消',
     okType: 'danger',
     async onOk() {
-      setOperating(document.id, 'delete', true)
+      if (!operationGuard.has(confirmationKey) || !operationGuard.has(key)) return
       try {
         const response = await deleteCustomerServiceKnowledgeDocument(document.id)
         if (!isSuccessCode(response.code)) throw new Error(response.message || '删除失败')
+        if (disposed) return
         message.success('文档删除任务已提交')
         await loadDocuments()
       } catch {
-        message.error('删除失败，请稍后重试')
-        throw new Error('delete failed')
+        if (!disposed) message.error('删除失败，请稍后重试')
       } finally {
-        setOperating(document.id, 'delete', false)
+        operationGuard.releaseAll(guardKeys)
       }
+    },
+    onCancel() {
+      operationGuard.releaseAll(guardKeys)
     },
   })
 }
 
 async function openTasks(document: CustomerServiceKnowledgeDocument) {
+  const key = `tasks:${document.id}`
+  if (!operationGuard.acquire(key)) return
   tasksOpen.value = true
-  tasksLoading.value = true
   tasks.value = []
   try {
-    const response = await getCustomerServiceKnowledgeTasks(document.id, 20)
-    if (!isSuccessCode(response.code)) throw new Error(response.message || '任务历史加载失败')
-    tasks.value = Array.isArray(response.data) ? response.data : []
-  } catch {
-    message.error('ETL 历史加载失败，请稍后重试')
+    await tasksController.run({ documentId: document.id })
   } finally {
-    tasksLoading.value = false
+    operationGuard.release(key)
   }
 }
 
 function confirmRebuild() {
-  if (rebuilding.value) return
+  const key = 'rebuild'
+  const confirmationKey = 'destructive-confirmation'
+  const guardKeys = [confirmationKey, key]
+  if (!operationGuard.acquireAll(guardKeys)) return
   Modal.confirm({
     title: '确认全量重建客服知识库？',
     content: '该操作会创建全量重建任务，期间检索结果可能短暂延迟更新。',
@@ -444,23 +507,34 @@ function confirmRebuild() {
     cancelText: '取消',
     okType: 'danger',
     async onOk() {
-      rebuilding.value = true
+      if (!operationGuard.has(confirmationKey) || !operationGuard.has(key)) return
       try {
         const response = await rebuildCustomerServiceKnowledge()
         if (!isSuccessCode(response.code)) throw new Error(response.message || '重建提交失败')
+        if (disposed) return
         message.success('全量重建任务已提交')
         await loadDocuments()
       } catch {
-        message.error('全量重建提交失败，请稍后重试')
-        throw new Error('rebuild failed')
+        if (!disposed) message.error('全量重建提交失败，请稍后重试')
       } finally {
-        rebuilding.value = false
+        operationGuard.releaseAll(guardKeys)
       }
+    },
+    onCancel() {
+      operationGuard.releaseAll(guardKeys)
     },
   })
 }
 
-onBeforeUnmount(clearSelectedFile)
+onBeforeUnmount(() => {
+  disposed = true
+  listController.dispose()
+  healthController.dispose()
+  uploadController.dispose()
+  tasksController.dispose()
+  operationGuard.dispose()
+  clearSelectedFile()
+})
 void loadDocuments()
 </script>
 

@@ -7,6 +7,8 @@ import {
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
   canRetryCustomerServiceKnowledgeDocument,
+  createCustomerServiceLatestRequestController,
+  createCustomerServiceOperationGuard,
   createCustomerServiceRequestController,
   getCustomerServiceDocumentStatus,
   getCustomerServiceTaskStatus,
@@ -20,17 +22,21 @@ import {
   validateCustomerServiceQuestion,
 } from '../src/utils/customerService.ts'
 
-test('知识库文件校验允许约定扩展名且大小写兼容', () => {
-  for (const name of ['guide.pdf', 'guide.DOCX', 'guide.md', 'guide.MARKDOWN', 'guide.Txt']) {
+test('知识库文件校验允许后端支持的扩展名且大小写兼容', () => {
+  for (const name of ['guide.pdf', 'guide.DOCX', 'guide.md', 'guide.Txt']) {
     assert.deepEqual(validateCustomerServiceKnowledgeFile({ name, size: 1024 }), { valid: true })
   }
 })
 
-test('知识库文件校验拒绝其他扩展名和超过 20 MiB 的文件', () => {
+test('知识库文件校验拒绝 markdown 等其他扩展名和超过 20 MiB 的文件', () => {
   assert.equal(CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT, 20 * 1024 * 1024)
+  assert.deepEqual(validateCustomerServiceKnowledgeFile({ name: 'guide.markdown', size: 1024 }), {
+    valid: false,
+    message: '仅支持 PDF、DOCX、MD、TXT 文件',
+  })
   assert.deepEqual(validateCustomerServiceKnowledgeFile({ name: 'archive.zip', size: 1024 }), {
     valid: false,
-    message: '仅支持 PDF、DOCX、MD、MARKDOWN、TXT 文件',
+    message: '仅支持 PDF、DOCX、MD、TXT 文件',
   })
   assert.deepEqual(
     validateCustomerServiceKnowledgeFile({
@@ -260,6 +266,86 @@ function deferred<T>() {
   })
   return { promise, resolve, reject }
 }
+
+test('列表请求使用参数快照且只有最新分页响应可更新状态', async () => {
+  const first = deferred<{ page: number }>()
+  const second = deferred<{ page: number }>()
+  const requestedPages: number[] = []
+  const appliedPages: number[] = []
+  const controller = createCustomerServiceLatestRequestController({
+    request: (params: { page: number }) => {
+      requestedPages.push(params.page)
+      return params.page === 1 ? first.promise : second.promise
+    },
+    onSuccess: (result) => appliedPages.push(result.page),
+  })
+
+  const firstRun = controller.run({ page: 1 })
+  const secondRun = controller.run({ page: 2 })
+  first.resolve({ page: 1 })
+  second.resolve({ page: 2 })
+  await Promise.all([firstRun, secondRun])
+
+  assert.deepEqual(requestedPages, [1, 2])
+  assert.deepEqual(appliedPages, [2])
+})
+
+test('mutation 确认 guard 从打开确认框起防止重复并可释放', () => {
+  const changes: string[][] = []
+  const guard = createCustomerServiceOperationGuard((keys) => changes.push([...keys]))
+
+  assert.equal(guard.acquire('document:1:delete'), true)
+  assert.equal(guard.acquire('document:1:delete'), false)
+  assert.equal(guard.has('document:1:delete'), true)
+  guard.release('document:1:delete')
+  assert.equal(guard.has('document:1:delete'), false)
+  assert.equal(guard.acquireAll(['destructive-confirmation', 'rebuild']), true)
+  assert.equal(guard.acquireAll(['destructive-confirmation', 'document:2:delete']), false)
+  guard.releaseAll(['destructive-confirmation', 'rebuild'])
+  assert.equal(guard.acquireAll(['destructive-confirmation', 'document:2:delete']), true)
+  guard.dispose()
+  assert.equal(guard.has('document:2:delete'), false)
+  assert.deepEqual(changes.at(-1), [])
+})
+
+test('上传请求 dispose 会 abort 且迟到结果不更新页面', async () => {
+  const pending = deferred<string>()
+  let signal: AbortSignal | undefined
+  const applied: string[] = []
+  const controller = createCustomerServiceLatestRequestController({
+    request: (_file: { name: string }, requestSignal) => {
+      signal = requestSignal
+      return pending.promise
+    },
+    onSuccess: (result) => applied.push(result),
+  })
+
+  const run = controller.run({ name: 'guide.pdf' })
+  controller.dispose()
+  assert.equal(signal?.aborted, true)
+  pending.resolve('uploaded')
+  assert.equal(await run, false)
+  assert.deepEqual(applied, [])
+})
+
+test('ETL 历史连续请求只允许最新文档结果更新抽屉', async () => {
+  const first = deferred<{ documentId: string }>()
+  const second = deferred<{ documentId: string }>()
+  const applied: string[] = []
+  const controller = createCustomerServiceLatestRequestController({
+    request: (params: { documentId: string }) =>
+      params.documentId === 'doc-1' ? first.promise : second.promise,
+    onSuccess: (result) => applied.push(result.documentId),
+  })
+
+  const firstRun = controller.run({ documentId: 'doc-1' })
+  const secondRun = controller.run({ documentId: 'doc-2' })
+  second.resolve({ documentId: 'doc-2' })
+  first.resolve({ documentId: 'doc-1' })
+  await Promise.all([firstRun, secondRun])
+
+  assert.deepEqual(applied, ['doc-2'])
+})
 
 function answeredResponse(answer: string) {
   return {

@@ -11,7 +11,7 @@ export const CUSTOMER_SERVICE_QUESTION_LIMIT = 4000
 export const CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT = 16000
 export const CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT = 20 * 1024 * 1024
 
-const CUSTOMER_SERVICE_KNOWLEDGE_EXTENSIONS = new Set(['pdf', 'docx', 'md', 'markdown', 'txt'])
+const CUSTOMER_SERVICE_KNOWLEDGE_EXTENSIONS = new Set(['pdf', 'docx', 'md', 'txt'])
 
 export interface CustomerServiceStatusMeta {
   label: string
@@ -26,6 +26,15 @@ export interface CustomerServiceKnowledgeFileLike {
 export type CustomerServiceKnowledgeFileValidation =
   | { valid: true }
   | { valid: false; message: string }
+
+type MaybePromise<T> = T | Promise<T>
+
+export interface CustomerServiceLatestRequestControllerOptions<Params, Result> {
+  request: (params: Params, signal: AbortSignal) => Promise<Result>
+  onSuccess: (result: Result, params: Params) => MaybePromise<void>
+  onError?: (error: unknown, params: Params) => MaybePromise<void>
+  onLoadingChange?: (loading: boolean, params: Params) => void
+}
 
 const DOCUMENT_STATUS_META: Record<string, CustomerServiceStatusMeta> = {
   UPLOADED: { label: '已上传', color: 'blue' },
@@ -52,7 +61,7 @@ export function validateCustomerServiceKnowledgeFile(
 ): CustomerServiceKnowledgeFileValidation {
   const extension = file.name.trim().split('.').pop()?.toLowerCase()
   if (!extension || !CUSTOMER_SERVICE_KNOWLEDGE_EXTENSIONS.has(extension)) {
-    return { valid: false, message: '仅支持 PDF、DOCX、MD、MARKDOWN、TXT 文件' }
+    return { valid: false, message: '仅支持 PDF、DOCX、MD、TXT 文件' }
   }
   if (file.size <= 0) {
     return { valid: false, message: '文件不能为空' }
@@ -83,6 +92,108 @@ export function normalizeCustomerServiceErrorCode(code?: string | null): string 
   }
   const normalized = code.trim().toUpperCase()
   return STABLE_KNOWLEDGE_ERROR_CODE.test(normalized) ? normalized : 'UNKNOWN_ERROR'
+}
+
+export function createCustomerServiceLatestRequestController<Params, Result>({
+  request,
+  onSuccess,
+  onError,
+  onLoadingChange,
+}: CustomerServiceLatestRequestControllerOptions<Params, Result>) {
+  let requestSequence = 0
+  let disposed = false
+  const activeControllers = new Set<AbortController>()
+
+  const run = async (params: Params): Promise<boolean> => {
+    if (disposed) {
+      return false
+    }
+
+    const sequence = ++requestSequence
+    const controller = new AbortController()
+    activeControllers.add(controller)
+    onLoadingChange?.(true, params)
+
+    try {
+      const result = await request(params, controller.signal)
+      if (disposed || sequence !== requestSequence) {
+        return false
+      }
+      await onSuccess(result, params)
+      return true
+    } catch (error) {
+      if (disposed || sequence !== requestSequence || controller.signal.aborted) {
+        return false
+      }
+      await onError?.(error, params)
+      return false
+    } finally {
+      activeControllers.delete(controller)
+      if (!disposed && sequence === requestSequence) {
+        onLoadingChange?.(false, params)
+      }
+    }
+  }
+
+  const dispose = () => {
+    if (disposed) {
+      return
+    }
+    disposed = true
+    requestSequence += 1
+    activeControllers.forEach((controller) => controller.abort())
+    activeControllers.clear()
+  }
+
+  return { run, dispose }
+}
+
+export function createCustomerServiceOperationGuard(
+  onChange?: (keys: ReadonlySet<string>) => void,
+) {
+  const keys = new Set<string>()
+  let disposed = false
+
+  const notify = () => onChange?.(new Set(keys))
+
+  const acquireAll = (requestedKeys: string[]): boolean => {
+    const uniqueKeys = [...new Set(requestedKeys)]
+    if (disposed || uniqueKeys.length === 0 || uniqueKeys.some((key) => keys.has(key))) {
+      return false
+    }
+    uniqueKeys.forEach((key) => keys.add(key))
+    notify()
+    return true
+  }
+
+  const releaseAll = (requestedKeys: string[]) => {
+    let changed = false
+    requestedKeys.forEach((key) => {
+      changed = keys.delete(key) || changed
+    })
+    if (changed) {
+      notify()
+    }
+  }
+
+  const dispose = () => {
+    if (disposed) {
+      return
+    }
+    disposed = true
+    keys.clear()
+    notify()
+  }
+
+  return {
+    acquire: (key: string) => acquireAll([key]),
+    acquireAll,
+    release: (key: string) => releaseAll([key]),
+    releaseAll,
+    has: (key: string) => keys.has(key),
+    hasPrefix: (prefix: string) => Array.from(keys).some((key) => key.startsWith(prefix)),
+    dispose,
+  }
 }
 
 export type CustomerServiceQuestionValidation =

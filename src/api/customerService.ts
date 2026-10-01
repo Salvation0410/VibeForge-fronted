@@ -97,6 +97,7 @@ export function askCustomerService(
 export function uploadCustomerServiceKnowledgeDocument(
   file: File,
   replacementId?: CustomerServiceKnowledgeId,
+  signal?: AbortSignal,
 ): Promise<BaseResponse<CustomerServiceKnowledgeDocument>> {
   const formData = new FormData()
   formData.append('file', file)
@@ -106,6 +107,7 @@ export function uploadCustomerServiceKnowledgeDocument(
       formData,
       {
         params: replacementId === undefined ? undefined : { replacementId },
+        signal,
         transformResponse: apiTransformResponse,
       },
     )
@@ -114,11 +116,17 @@ export function uploadCustomerServiceKnowledgeDocument(
 
 export function getCustomerServiceKnowledgePage(
   data: CustomerServiceKnowledgePageRequest,
+  signal?: AbortSignal,
 ): Promise<BaseResponse<CustomerServicePageResult<CustomerServiceKnowledgeDocument>>> {
   return request
-    .post<
-      BaseResponse<CustomerServicePageResult<CustomerServiceKnowledgeDocument>>
-    >('/admin/customer-service/knowledge/page', data, { transformResponse: apiTransformResponse })
+    .post<BaseResponse<CustomerServicePageResult<CustomerServiceKnowledgeDocument>>>(
+      '/admin/customer-service/knowledge/page',
+      data,
+      {
+        signal,
+        transformResponse: apiTransformResponse,
+      },
+    )
     .then(unwrapResponse)
 }
 
@@ -165,11 +173,17 @@ export function deleteCustomerServiceKnowledgeDocument(
 export function getCustomerServiceKnowledgeTasks(
   id: CustomerServiceKnowledgeId,
   limit = 20,
+  signal?: AbortSignal,
 ): Promise<BaseResponse<CustomerServiceKnowledgeTask[]>> {
   return request
-    .get<
-      BaseResponse<CustomerServiceKnowledgeTask[]>
-    >(`/admin/customer-service/knowledge/${id}/tasks`, { params: { limit }, transformResponse: apiTransformResponse })
+    .get<BaseResponse<CustomerServiceKnowledgeTask[]>>(
+      `/admin/customer-service/knowledge/${id}/tasks`,
+      {
+        params: { limit },
+        signal,
+        transformResponse: apiTransformResponse,
+      },
+    )
     .then(unwrapResponse)
 }
 
@@ -181,11 +195,12 @@ export function rebuildCustomerServiceKnowledge(): Promise<BaseResponse<number>>
     .then(unwrapResponse)
 }
 
-export function getCustomerServiceKnowledgeHealth(): Promise<
-  BaseResponse<CustomerServiceKnowledgeHealth>
-> {
+export function getCustomerServiceKnowledgeHealth(
+  signal?: AbortSignal,
+): Promise<BaseResponse<CustomerServiceKnowledgeHealth>> {
   return request
     .get<BaseResponse<CustomerServiceKnowledgeHealth>>('/admin/customer-service/knowledge/health', {
+      signal,
       transformResponse: apiTransformResponse,
     })
     .then(unwrapResponse)
