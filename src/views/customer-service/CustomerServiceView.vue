@@ -16,14 +16,22 @@
         show-count
         placeholder="例如：如何修改应用名称？"
         :disabled="loading"
+        :aria-invalid="showQuestionError ? 'true' : 'false'"
+        aria-describedby="customer-service-question-help"
         @keydown.ctrl.enter.prevent="submitQuestion"
         @keydown.meta.enter.prevent="submitQuestion"
       />
       <div class="question-actions">
-        <span class="input-hint">
+        <span
+          id="customer-service-question-help"
+          class="input-hint"
+          :class="{ 'validation-error': showQuestionError }"
+          aria-live="polite"
+          :role="showQuestionError ? 'alert' : undefined"
+        >
           {{
-            question && !questionValidation.valid
-              ? questionValidation.message
+            showQuestionError
+              ? questionErrorMessage
               : '最多 4000 个字符，按 Ctrl / Command + Enter 可提交'
           }}
         </span>
@@ -109,11 +117,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { askCustomerService } from '@/api/customerService'
-import { isSuccessCode } from '@/utils/appUtils'
 import {
   CUSTOMER_SERVICE_QUESTION_LIMIT,
-  isCustomerServiceRequestCancelled,
-  normalizeCustomerServiceState,
+  createCustomerServiceRequestController,
   type CustomerServiceUiState,
   validateCustomerServiceQuestion,
 } from '@/utils/customerService'
@@ -121,69 +127,34 @@ import {
 const question = ref('')
 const loading = ref(false)
 const uiState = ref<CustomerServiceUiState | null>(null)
-let activeController: AbortController | null = null
-let requestSequence = 0
+
+const requestController = createCustomerServiceRequestController({
+  request: askCustomerService,
+  onStateChange: (state) => {
+    loading.value = state.loading
+    uiState.value = state.uiState
+  },
+})
 
 const questionValidation = computed(() => validateCustomerServiceQuestion(question.value))
+const questionErrorMessage = computed(() =>
+  questionValidation.value.valid ? '' : questionValidation.value.message,
+)
+const showQuestionError = computed(
+  () => Boolean(question.value) && Boolean(questionErrorMessage.value),
+)
 const canSubmit = computed(() => !loading.value && questionValidation.value.valid)
 
-async function submitQuestion() {
-  const validation = validateCustomerServiceQuestion(question.value)
-  if (!validation.valid || loading.value) {
-    return
-  }
-
-  const controller = new AbortController()
-  const currentSequence = ++requestSequence
-  activeController = controller
-  loading.value = true
-  uiState.value = null
-
-  try {
-    const response = await askCustomerService(validation.question, controller.signal)
-    if (currentSequence !== requestSequence) {
-      return
-    }
-
-    if (!isSuccessCode(response.code) || !response.data) {
-      uiState.value = normalizeCustomerServiceState({ type: 'failure', cancelled: false })
-      return
-    }
-
-    uiState.value = normalizeCustomerServiceState({ type: 'success', answer: response.data })
-  } catch (error) {
-    if (currentSequence !== requestSequence) {
-      return
-    }
-
-    uiState.value = normalizeCustomerServiceState({
-      type: 'failure',
-      cancelled: isCustomerServiceRequestCancelled(error, controller.signal),
-    })
-  } finally {
-    if (currentSequence === requestSequence) {
-      activeController = null
-      loading.value = false
-    }
-  }
+function submitQuestion() {
+  return requestController.submit(question.value)
 }
 
 function cancelQuestion() {
-  if (!activeController) {
-    return
-  }
-
-  requestSequence += 1
-  activeController.abort()
-  activeController = null
-  loading.value = false
-  uiState.value = normalizeCustomerServiceState({ type: 'failure', cancelled: true })
+  requestController.cancel()
 }
 
 onBeforeUnmount(() => {
-  requestSequence += 1
-  activeController?.abort()
-  activeController = null
+  requestController.dispose()
 })
 </script>
 
@@ -260,6 +231,10 @@ onBeforeUnmount(() => {
 .input-hint {
   color: #8a98ab;
   font-size: 12px;
+}
+
+.validation-error {
+  color: #cf1322;
 }
 
 .button-group {

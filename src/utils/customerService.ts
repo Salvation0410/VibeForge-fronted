@@ -1,5 +1,9 @@
 import axios from 'axios'
-import type { CustomerServiceAnswer, CustomerServiceSource } from '../api/customerService.ts'
+import type {
+  BaseResponse,
+  CustomerServiceAnswer,
+  CustomerServiceSource,
+} from '../api/customerService.ts'
 
 export const CUSTOMER_SERVICE_SOURCE_LIMIT = 3
 export const CUSTOMER_SERVICE_EXCERPT_LIMIT = 180
@@ -19,6 +23,16 @@ export type CustomerServiceUiState =
 export type CustomerServiceOutcome =
   | { type: 'success'; answer: CustomerServiceAnswer }
   | { type: 'failure'; cancelled: boolean }
+
+export interface CustomerServiceRequestState {
+  loading: boolean
+  uiState: CustomerServiceUiState | null
+}
+
+export interface CustomerServiceRequestControllerOptions {
+  request: (question: string, signal: AbortSignal) => Promise<BaseResponse<CustomerServiceAnswer>>
+  onStateChange: (state: CustomerServiceRequestState) => void
+}
 
 export function validateCustomerServiceQuestion(
   question: string,
@@ -42,10 +56,14 @@ export function validateCustomerServiceQuestion(
 
 function truncateExcerpt(excerpt: string): string {
   const normalized = excerpt.trim().replace(/\s+/g, ' ')
-  if (normalized.length <= CUSTOMER_SERVICE_EXCERPT_LIMIT) {
+  const codePoints = Array.from(normalized)
+  if (codePoints.length <= CUSTOMER_SERVICE_EXCERPT_LIMIT) {
     return normalized
   }
-  return `${normalized.slice(0, CUSTOMER_SERVICE_EXCERPT_LIMIT - 1).trimEnd()}…`
+  return `${codePoints
+    .slice(0, CUSTOMER_SERVICE_EXCERPT_LIMIT - 1)
+    .join('')
+    .trimEnd()}…`
 }
 
 export function normalizeCustomerServiceSources(
@@ -96,4 +114,96 @@ export function normalizeCustomerServiceState(
 
 export function isCustomerServiceRequestCancelled(error: unknown, signal?: AbortSignal): boolean {
   return Boolean(signal?.aborted || axios.isCancel(error))
+}
+
+export function createCustomerServiceRequestController({
+  request,
+  onStateChange,
+}: CustomerServiceRequestControllerOptions) {
+  let state: CustomerServiceRequestState = { loading: false, uiState: null }
+  let activeController: AbortController | null = null
+  let requestSequence = 0
+  let disposed = false
+
+  const updateState = (nextState: CustomerServiceRequestState) => {
+    state = nextState
+    onStateChange(state)
+  }
+
+  const submit = async (question: string): Promise<boolean> => {
+    const validation = validateCustomerServiceQuestion(question)
+    if (!validation.valid || state.loading || disposed) {
+      return false
+    }
+
+    const controller = new AbortController()
+    const currentSequence = ++requestSequence
+    activeController = controller
+    updateState({ loading: true, uiState: null })
+
+    try {
+      const response = await request(validation.question, controller.signal)
+      if (disposed || currentSequence !== requestSequence) {
+        return false
+      }
+
+      const uiState =
+        (response.code === 0 || response.code === 20000) && response.data
+          ? normalizeCustomerServiceState({ type: 'success', answer: response.data })
+          : normalizeCustomerServiceState({ type: 'failure', cancelled: false })
+      updateState({ loading: true, uiState })
+      return true
+    } catch (error) {
+      if (disposed || currentSequence !== requestSequence) {
+        return false
+      }
+
+      updateState({
+        loading: true,
+        uiState: normalizeCustomerServiceState({
+          type: 'failure',
+          cancelled: isCustomerServiceRequestCancelled(error, controller.signal),
+        }),
+      })
+      return true
+    } finally {
+      if (!disposed && currentSequence === requestSequence) {
+        activeController = null
+        updateState({ ...state, loading: false })
+      }
+    }
+  }
+
+  const cancel = (): boolean => {
+    if (!activeController || disposed) {
+      return false
+    }
+
+    requestSequence += 1
+    activeController.abort()
+    activeController = null
+    updateState({
+      loading: false,
+      uiState: normalizeCustomerServiceState({ type: 'failure', cancelled: true }),
+    })
+    return true
+  }
+
+  const dispose = () => {
+    if (disposed) {
+      return
+    }
+
+    disposed = true
+    requestSequence += 1
+    activeController?.abort()
+    activeController = null
+  }
+
+  return {
+    submit,
+    cancel,
+    dispose,
+    getState: () => state,
+  }
 }

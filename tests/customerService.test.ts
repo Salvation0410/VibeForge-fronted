@@ -5,6 +5,7 @@ import {
   CUSTOMER_SERVICE_EXCERPT_LIMIT,
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
+  createCustomerServiceRequestController,
   isCustomerServiceRequestCancelled,
   normalizeCustomerServiceState,
   normalizeCustomerServiceSources,
@@ -44,8 +45,21 @@ test('来源摘要会折叠空白并裁剪到有界长度', () => {
 
   assert.ok(result)
   assert.equal(result.excerpt.includes('  '), false)
-  assert.ok(result.excerpt.length <= CUSTOMER_SERVICE_EXCERPT_LIMIT)
+  assert.ok(Array.from(result.excerpt).length <= CUSTOMER_SERVICE_EXCERPT_LIMIT)
   assert.ok(result.excerpt.endsWith('…'))
+})
+
+test('来源摘要不会在 astral 字符中间截断', () => {
+  const excerpt = `${'a'.repeat(178)}😀后续文本`
+  const [result] = normalizeCustomerServiceSources([source('chunk-1', excerpt)])
+
+  assert.ok(result)
+  assert.equal(result.excerpt, `${'a'.repeat(178)}😀…`)
+  assert.equal(
+    /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(result.excerpt),
+    false,
+  )
+  assert.equal(Array.from(result.excerpt).length, CUSTOMER_SERVICE_EXCERPT_LIMIT)
 })
 
 test('成功回答归一化为 answered 状态并整理来源', () => {
@@ -117,4 +131,92 @@ test('问题校验遵守 16000 UTF-8 字节保护并覆盖 emoji 边界', () => 
     valid: false,
     message: '问题内容过长，请精简后重试',
   })
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+function answeredResponse(answer: string) {
+  return {
+    code: 0,
+    data: {
+      answered: true,
+      answer,
+      sources: [],
+    },
+  }
+}
+
+test('取消后旧响应不能覆盖 cancelled 状态', async () => {
+  const pending = deferred<ReturnType<typeof answeredResponse>>()
+  const states: string[] = []
+  const controller = createCustomerServiceRequestController({
+    request: () => pending.promise,
+    onStateChange: (state) =>
+      states.push(state.uiState?.status ?? (state.loading ? 'loading' : 'idle')),
+  })
+
+  const requestPromise = controller.submit('第一个问题')
+  assert.equal(controller.cancel(), true)
+  pending.resolve(answeredResponse('迟到回答'))
+  await requestPromise
+
+  assert.equal(controller.getState().uiState?.status, 'cancelled')
+  assert.equal(states.at(-1), 'cancelled')
+})
+
+test('取消后可以立即提交新请求且旧响应不能覆盖新回答', async () => {
+  const first = deferred<ReturnType<typeof answeredResponse>>()
+  const second = deferred<ReturnType<typeof answeredResponse>>()
+  const signals: AbortSignal[] = []
+  let requestCount = 0
+  const controller = createCustomerServiceRequestController({
+    request: (_question, signal) => {
+      signals.push(signal)
+      requestCount += 1
+      return requestCount === 1 ? first.promise : second.promise
+    },
+    onStateChange: () => undefined,
+  })
+
+  const firstPromise = controller.submit('第一个问题')
+  controller.cancel()
+  const secondPromise = controller.submit('第二个问题')
+  first.resolve(answeredResponse('旧回答'))
+  second.resolve(answeredResponse('新回答'))
+  await Promise.all([firstPromise, secondPromise])
+
+  assert.equal(signals[0]?.aborted, true)
+  assert.equal(signals[1]?.aborted, false)
+  assert.deepEqual(controller.getState().uiState, {
+    status: 'answered',
+    answer: '新回答',
+    sources: [],
+  })
+})
+
+test('卸载对应的 dispose 后迟到响应不会更新状态', async () => {
+  const pending = deferred<ReturnType<typeof answeredResponse>>()
+  const states: string[] = []
+  const controller = createCustomerServiceRequestController({
+    request: () => pending.promise,
+    onStateChange: (state) =>
+      states.push(state.uiState?.status ?? (state.loading ? 'loading' : 'idle')),
+  })
+
+  const requestPromise = controller.submit('即将卸载的问题')
+  controller.dispose()
+  const updateCountAfterDispose = states.length
+  pending.resolve(answeredResponse('卸载后的迟到回答'))
+  await requestPromise
+
+  assert.equal(states.length, updateCountAfterDispose)
+  assert.equal(states.includes('answered'), false)
 })
