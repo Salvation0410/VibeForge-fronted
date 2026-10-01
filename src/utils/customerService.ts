@@ -3,6 +3,7 @@ import type {
   BaseResponse,
   CustomerServiceAnswer,
   CustomerServiceSource,
+  LongValue,
 } from '../api/customerService.ts'
 
 export const CUSTOMER_SERVICE_SOURCE_LIMIT = 3
@@ -34,6 +35,15 @@ export interface CustomerServiceLatestRequestControllerOptions<Params, Result> {
   onSuccess: (result: Result, params: Params) => MaybePromise<void>
   onError?: (error: unknown, params: Params) => MaybePromise<void>
   onLoadingChange?: (loading: boolean, params: Params) => void
+}
+
+export interface CustomerServiceModalHandle {
+  destroy: () => void
+}
+
+export interface CustomerServicePaginationSnapshot {
+  pageNum: number
+  pageSize: number
 }
 
 const DOCUMENT_STATUS_META: Record<string, CustomerServiceStatusMeta> = {
@@ -94,6 +104,104 @@ export function normalizeCustomerServiceErrorCode(code?: string | null): string 
   return STABLE_KNOWLEDGE_ERROR_CODE.test(normalized) ? normalized : 'UNKNOWN_ERROR'
 }
 
+function normalizeCustomerServiceUnsignedInteger(
+  value: LongValue | null | undefined,
+): string | null {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value >= 0 ? String(value) : null
+  }
+  const normalized = value?.trim()
+  return normalized && /^\d+$/.test(normalized) ? BigInt(normalized).toString() : null
+}
+
+export function formatCustomerServiceLongValue(
+  value: LongValue | null | undefined,
+  fallback = '—',
+): string {
+  return normalizeCustomerServiceUnsignedInteger(value) ?? fallback
+}
+
+export function encodeCustomerServiceKnowledgeId(value: LongValue): string {
+  return encodeURIComponent(String(value))
+}
+
+export function toCustomerServiceSafeNumber(
+  value: LongValue | null | undefined,
+  fallback = 0,
+): number {
+  const normalized = normalizeCustomerServiceUnsignedInteger(value)
+  if (normalized === null) {
+    return fallback
+  }
+  const integer = BigInt(normalized)
+  const maximum = BigInt(Number.MAX_SAFE_INTEGER)
+  return integer > maximum ? Number.MAX_SAFE_INTEGER : Number(integer)
+}
+
+export function formatCustomerServiceFileSize(value: LongValue | null | undefined): string {
+  const normalized = normalizeCustomerServiceUnsignedInteger(value)
+  if (normalized === null) {
+    return '—'
+  }
+  const bytes = BigInt(normalized)
+  const kibibyte = 1024n
+  const mebibyte = kibibyte * kibibyte
+  if (bytes < kibibyte) {
+    return `${bytes} B`
+  }
+  const unit = bytes < mebibyte ? kibibyte : mebibyte
+  const tenths = (bytes * 10n) / unit
+  const label = bytes < mebibyte ? 'KiB' : 'MiB'
+  return `${tenths / 10n}.${tenths % 10n} ${label}`
+}
+
+export function reconcileCustomerServicePagination(
+  snapshot: CustomerServicePaginationSnapshot,
+  totalRow: LongValue | null | undefined,
+) {
+  const pageSize = Math.max(1, Math.trunc(snapshot.pageSize) || 1)
+  const requestedPage = Math.max(1, Math.trunc(snapshot.pageNum) || 1)
+  const total = toCustomerServiceSafeNumber(totalRow)
+  const maxPage = Math.max(1, Math.ceil(total / pageSize))
+  const current = Math.min(requestedPage, maxPage)
+  return { current, pageSize, total, maxPage, needsReload: requestedPage > maxPage }
+}
+
+export function buildCustomerServiceKnowledgeUploadRequest(
+  file: File,
+  replacementId?: LongValue,
+  signal?: AbortSignal,
+) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return {
+    formData,
+    config: {
+      params: replacementId === undefined ? undefined : { replacementId },
+      signal,
+    },
+  }
+}
+
+function waitForCustomerServiceRequest<Result>(
+  promise: Promise<Result>,
+  signal: AbortSignal,
+): Promise<Result> {
+  return new Promise<Result>((resolve, reject) => {
+    const abort = () => {
+      const error = new Error('Request aborted')
+      error.name = 'AbortError'
+      reject(error)
+    }
+    if (signal.aborted) {
+      abort()
+      return
+    }
+    signal.addEventListener('abort', abort, { once: true })
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
+
 export function createCustomerServiceLatestRequestController<Params, Result>({
   request,
   onSuccess,
@@ -102,25 +210,29 @@ export function createCustomerServiceLatestRequestController<Params, Result>({
 }: CustomerServiceLatestRequestControllerOptions<Params, Result>) {
   let requestSequence = 0
   let disposed = false
-  const activeControllers = new Set<AbortController>()
+  let activeRequest: { sequence: number; controller: AbortController; params: Params } | undefined
 
   const run = async (params: Params): Promise<boolean> => {
     if (disposed) {
       return false
     }
 
+    activeRequest?.controller.abort()
     const sequence = ++requestSequence
     const controller = new AbortController()
-    activeControllers.add(controller)
+    activeRequest = { sequence, controller, params }
     onLoadingChange?.(true, params)
 
     try {
-      const result = await request(params, controller.signal)
+      const result = await waitForCustomerServiceRequest(
+        request(params, controller.signal),
+        controller.signal,
+      )
       if (disposed || sequence !== requestSequence) {
         return false
       }
       await onSuccess(result, params)
-      return true
+      return !disposed && sequence === requestSequence
     } catch (error) {
       if (disposed || sequence !== requestSequence || controller.signal.aborted) {
         return false
@@ -128,11 +240,23 @@ export function createCustomerServiceLatestRequestController<Params, Result>({
       await onError?.(error, params)
       return false
     } finally {
-      activeControllers.delete(controller)
-      if (!disposed && sequence === requestSequence) {
+      if (!disposed && activeRequest?.sequence === sequence) {
+        activeRequest = undefined
         onLoadingChange?.(false, params)
       }
     }
+  }
+
+  const cancel = (): boolean => {
+    if (disposed || !activeRequest) {
+      return false
+    }
+    const current = activeRequest
+    requestSequence += 1
+    activeRequest = undefined
+    current.controller.abort()
+    onLoadingChange?.(false, current.params)
+    return true
   }
 
   const dispose = () => {
@@ -141,11 +265,46 @@ export function createCustomerServiceLatestRequestController<Params, Result>({
     }
     disposed = true
     requestSequence += 1
-    activeControllers.forEach((controller) => controller.abort())
-    activeControllers.clear()
+    activeRequest?.controller.abort()
+    activeRequest = undefined
   }
 
-  return { run, dispose }
+  return { run, cancel, dispose }
+}
+
+export function createCustomerServiceModalRegistry() {
+  const entries = new Map<CustomerServiceModalHandle, () => void>()
+  let disposed = false
+
+  const register = (handle: CustomerServiceModalHandle, cleanup: () => void) => {
+    let active = true
+    const release = () => {
+      if (!active) return
+      active = false
+      entries.delete(handle)
+      cleanup()
+    }
+    if (disposed) {
+      release()
+      handle.destroy()
+      return release
+    }
+    entries.set(handle, release)
+    return release
+  }
+
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    const activeEntries = [...entries.entries()]
+    entries.clear()
+    activeEntries.forEach(([handle, release]) => {
+      release()
+      handle.destroy()
+    })
+  }
+
+  return { register, dispose }
 }
 
 export function createCustomerServiceOperationGuard(

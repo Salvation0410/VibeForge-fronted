@@ -73,7 +73,10 @@
           </template>
 
           <template v-else-if="column.key === 'version'">
-            <span>{{ record.documentVersion ?? 0 }} / {{ record.indexedVersion ?? 0 }}</span>
+            <span>
+              {{ formatCustomerServiceLongValue(record.documentVersion, '0') }} /
+              {{ formatCustomerServiceLongValue(record.indexedVersion, '0') }}
+            </span>
           </template>
 
           <template v-else-if="column.key === 'status'">
@@ -155,7 +158,13 @@
       </div>
     </a-card>
 
-    <a-drawer v-model:open="tasksOpen" width="760" title="ETL 任务历史" destroy-on-close>
+    <a-drawer
+      v-model:open="tasksOpen"
+      width="760"
+      title="ETL 任务历史"
+      destroy-on-close
+      @close="handleTasksClose"
+    >
       <a-spin :spinning="tasksLoading">
         <a-empty v-if="!tasksLoading && tasks.length === 0" description="暂无任务记录" />
         <a-timeline v-else>
@@ -168,8 +177,10 @@
                 </a-tag>
               </div>
               <div class="task-meta">
-                <span>文档版本 {{ task.documentVersion }}</span>
-                <span>ETL 版本 {{ task.etlVersion }}</span>
+                <span
+                  >文档版本 {{ formatCustomerServiceLongValue(task.documentVersion, '0') }}</span
+                >
+                <span>ETL 版本 {{ formatCustomerServiceLongValue(task.etlVersion, '0') }}</span>
                 <span>重试 {{ task.retryCount ?? 0 }} 次</span>
               </div>
               <div class="task-meta">
@@ -208,10 +219,14 @@ import { formatDateTime, isSuccessCode } from '@/utils/appUtils'
 import {
   canRetryCustomerServiceKnowledgeDocument,
   createCustomerServiceLatestRequestController,
+  createCustomerServiceModalRegistry,
   createCustomerServiceOperationGuard,
+  formatCustomerServiceFileSize,
+  formatCustomerServiceLongValue,
   getCustomerServiceDocumentStatus,
   getCustomerServiceTaskStatus,
   normalizeCustomerServiceErrorCode,
+  reconcileCustomerServicePagination,
   validateCustomerServiceKnowledgeFile,
 } from '@/utils/customerService'
 
@@ -243,6 +258,7 @@ const tasksOpen = ref(false)
 const tasksLoading = ref(false)
 const tasks = ref<CustomerServiceKnowledgeTask[]>([])
 let disposed = false
+let activeTasksKey = ''
 
 const pagination = reactive({ current: 1, pageSize: 10, total: 0 })
 
@@ -255,6 +271,7 @@ const healthItems = computed(() => [
 const operationGuard = createCustomerServiceOperationGuard((keys) => {
   operations.value = new Set(keys)
 })
+const modalRegistry = createCustomerServiceModalRegistry()
 const rebuilding = computed(() => operations.value.has('rebuild'))
 
 function documentStatus(status?: string | null) {
@@ -265,12 +282,7 @@ function taskStatus(status?: string | null) {
   return getCustomerServiceTaskStatus(status)
 }
 
-function formatFileSize(size?: number) {
-  const bytes = Number(size || 0)
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
-}
+const formatFileSize = formatCustomerServiceFileSize
 
 function operationLabel(operation?: string) {
   const labels: Record<string, string> = { INDEX: '索引', DELETE: '删除索引', REBUILD: '全量重建' }
@@ -326,9 +338,20 @@ const listController = createCustomerServiceLatestRequestController<
     }
     return response.data
   },
-  onSuccess: (page) => {
+  onSuccess: (page, params) => {
+    const normalized = reconcileCustomerServicePagination(params, page?.totalRow)
+    pagination.total = normalized.total
+    if (
+      normalized.needsReload &&
+      pagination.current === params.pageNum &&
+      pagination.pageSize === params.pageSize
+    ) {
+      pagination.current = normalized.current
+      pagination.pageSize = normalized.pageSize
+      void loadDocuments()
+      return
+    }
     documents.value = Array.isArray(page?.records) ? page.records : []
-    pagination.total = Number(page?.totalRow || 0)
   },
   onError: () => {
     message.error('知识文档加载失败，请稍后重试')
@@ -457,14 +480,18 @@ function confirmDelete(document: CustomerServiceKnowledgeDocument) {
   const confirmationKey = 'destructive-confirmation'
   const guardKeys = [confirmationKey, key]
   if (hasDocumentOperation(document.id) || !operationGuard.acquireAll(guardKeys)) return
-  Modal.confirm({
+  let releaseModal: () => void = () => undefined
+  const handle = Modal.confirm({
     title: '确认删除该知识文档？',
     content: `“${document.name || '未命名文档'}”删除后无法恢复，并会异步清理对应索引。`,
     okText: '确认删除',
     cancelText: '取消',
     okType: 'danger',
     async onOk() {
-      if (!operationGuard.has(confirmationKey) || !operationGuard.has(key)) return
+      if (disposed || !operationGuard.has(confirmationKey) || !operationGuard.has(key)) {
+        releaseModal()
+        return
+      }
       try {
         const response = await deleteCustomerServiceKnowledgeDocument(document.id)
         if (!isSuccessCode(response.code)) throw new Error(response.message || '删除失败')
@@ -474,24 +501,35 @@ function confirmDelete(document: CustomerServiceKnowledgeDocument) {
       } catch {
         if (!disposed) message.error('删除失败，请稍后重试')
       } finally {
-        operationGuard.releaseAll(guardKeys)
+        releaseModal()
       }
     },
     onCancel() {
-      operationGuard.releaseAll(guardKeys)
+      releaseModal()
     },
   })
+  releaseModal = modalRegistry.register(handle, () => operationGuard.releaseAll(guardKeys))
 }
 
 async function openTasks(document: CustomerServiceKnowledgeDocument) {
   const key = `tasks:${document.id}`
   if (!operationGuard.acquire(key)) return
+  activeTasksKey = key
   tasksOpen.value = true
   tasks.value = []
   try {
     await tasksController.run({ documentId: document.id })
   } finally {
     operationGuard.release(key)
+    if (activeTasksKey === key) activeTasksKey = ''
+  }
+}
+
+function handleTasksClose() {
+  tasksController.cancel()
+  if (activeTasksKey) {
+    operationGuard.release(activeTasksKey)
+    activeTasksKey = ''
   }
 }
 
@@ -500,14 +538,18 @@ function confirmRebuild() {
   const confirmationKey = 'destructive-confirmation'
   const guardKeys = [confirmationKey, key]
   if (!operationGuard.acquireAll(guardKeys)) return
-  Modal.confirm({
+  let releaseModal: () => void = () => undefined
+  const handle = Modal.confirm({
     title: '确认全量重建客服知识库？',
     content: '该操作会创建全量重建任务，期间检索结果可能短暂延迟更新。',
     okText: '确认重建',
     cancelText: '取消',
     okType: 'danger',
     async onOk() {
-      if (!operationGuard.has(confirmationKey) || !operationGuard.has(key)) return
+      if (disposed || !operationGuard.has(confirmationKey) || !operationGuard.has(key)) {
+        releaseModal()
+        return
+      }
       try {
         const response = await rebuildCustomerServiceKnowledge()
         if (!isSuccessCode(response.code)) throw new Error(response.message || '重建提交失败')
@@ -517,13 +559,14 @@ function confirmRebuild() {
       } catch {
         if (!disposed) message.error('全量重建提交失败，请稍后重试')
       } finally {
-        operationGuard.releaseAll(guardKeys)
+        releaseModal()
       }
     },
     onCancel() {
-      operationGuard.releaseAll(guardKeys)
+      releaseModal()
     },
   })
+  releaseModal = modalRegistry.register(handle, () => operationGuard.releaseAll(guardKeys))
 }
 
 onBeforeUnmount(() => {
@@ -532,6 +575,7 @@ onBeforeUnmount(() => {
   healthController.dispose()
   uploadController.dispose()
   tasksController.dispose()
+  modalRegistry.dispose()
   operationGuard.dispose()
   clearSelectedFile()
 })

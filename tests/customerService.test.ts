@@ -7,17 +7,24 @@ import {
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
   canRetryCustomerServiceKnowledgeDocument,
+  buildCustomerServiceKnowledgeUploadRequest,
   createCustomerServiceLatestRequestController,
+  createCustomerServiceModalRegistry,
   createCustomerServiceOperationGuard,
   createCustomerServiceRequestController,
+  encodeCustomerServiceKnowledgeId,
   getCustomerServiceDocumentStatus,
   getCustomerServiceTaskStatus,
   getCustomerServiceQuestionLength,
   inspectCustomerServiceQuestion,
   isCustomerServiceRequestCancelled,
+  formatCustomerServiceFileSize,
+  formatCustomerServiceLongValue,
   normalizeCustomerServiceErrorCode,
   normalizeCustomerServiceState,
   normalizeCustomerServiceSources,
+  reconcileCustomerServicePagination,
+  toCustomerServiceSafeNumber,
   validateCustomerServiceKnowledgeFile,
   validateCustomerServiceQuestion,
 } from '../src/utils/customerService.ts'
@@ -271,10 +278,12 @@ test('列表请求使用参数快照且只有最新分页响应可更新状态',
   const first = deferred<{ page: number }>()
   const second = deferred<{ page: number }>()
   const requestedPages: number[] = []
+  const signals: AbortSignal[] = []
   const appliedPages: number[] = []
   const controller = createCustomerServiceLatestRequestController({
-    request: (params: { page: number }) => {
+    request: (params: { page: number }, signal) => {
       requestedPages.push(params.page)
+      signals.push(signal)
       return params.page === 1 ? first.promise : second.promise
     },
     onSuccess: (result) => appliedPages.push(result.page),
@@ -282,12 +291,99 @@ test('列表请求使用参数快照且只有最新分页响应可更新状态',
 
   const firstRun = controller.run({ page: 1 })
   const secondRun = controller.run({ page: 2 })
-  first.resolve({ page: 1 })
+  assert.equal(signals[0]?.aborted, true)
+  assert.equal(await firstRun, false)
   second.resolve({ page: 2 })
-  await Promise.all([firstRun, secondRun])
+  await secondRun
+  first.resolve({ page: 1 })
 
   assert.deepEqual(requestedPages, [1, 2])
   assert.deepEqual(appliedPages, [2])
+})
+
+test('latest request controller cancel 会中止当前请求并释放 loading', async () => {
+  const pending = deferred<string>()
+  const loading: boolean[] = []
+  let signal: AbortSignal | undefined
+  const controller = createCustomerServiceLatestRequestController({
+    request: (_params: undefined, requestSignal) => {
+      signal = requestSignal
+      return pending.promise
+    },
+    onSuccess: () => undefined,
+    onLoadingChange: (value) => loading.push(value),
+  })
+
+  const run = controller.run(undefined)
+  assert.equal(controller.cancel(), true)
+  assert.equal(signal?.aborted, true)
+  assert.deepEqual(loading, [true, false])
+  assert.equal(await run, false)
+  pending.resolve('late')
+  assert.equal(controller.cancel(), false)
+})
+
+test('分页字符串 Long 正规化并在末页越界时回退', () => {
+  assert.deepEqual(reconcileCustomerServicePagination({ pageNum: 3, pageSize: 10 }, '20'), {
+    current: 2,
+    pageSize: 10,
+    total: 20,
+    maxPage: 2,
+    needsReload: true,
+  })
+  assert.deepEqual(
+    reconcileCustomerServicePagination({ pageNum: 2, pageSize: 20 }, 'not-a-number'),
+    { current: 1, pageSize: 20, total: 0, maxPage: 1, needsReload: true },
+  )
+  assert.equal(toCustomerServiceSafeNumber('900719925474099312345'), Number.MAX_SAFE_INTEGER)
+  assert.equal(toCustomerServiceSafeNumber('invalid'), 0)
+})
+
+test('LongValue 与文件大小格式化保持字符串精度并稳定兜底', () => {
+  assert.equal(formatCustomerServiceLongValue('900719925474099312345'), '900719925474099312345')
+  assert.equal(formatCustomerServiceLongValue(12), '12')
+  assert.equal(formatCustomerServiceLongValue('invalid'), '—')
+  assert.equal(formatCustomerServiceFileSize('1048576'), '1.0 MiB')
+  assert.equal(formatCustomerServiceFileSize('invalid'), '—')
+  assert.equal(encodeCustomerServiceKnowledgeId('900719925474099312345'), '900719925474099312345')
+  assert.equal(encodeCustomerServiceKnowledgeId('1/2'), '1%2F2')
+})
+
+test('上传 request helper 保留 file 字段、replacementId 和 signal', () => {
+  const file = new File(['content'], 'guide.pdf', { type: 'application/pdf' })
+  const controller = new AbortController()
+  const request = buildCustomerServiceKnowledgeUploadRequest(
+    file,
+    '900719925474099312345',
+    controller.signal,
+  )
+
+  assert.equal(request.formData.get('file'), file)
+  assert.deepEqual(request.config.params, { replacementId: '900719925474099312345' })
+  assert.equal(request.config.signal, controller.signal)
+})
+
+test('modal registry dispose 销毁 handle 且 cleanup 只执行一次', () => {
+  let destroyed = 0
+  let cleaned = 0
+  const handle = { destroy: () => (destroyed += 1) }
+  const registry = createCustomerServiceModalRegistry()
+  const release = registry.register(handle, () => {
+    cleaned += 1
+  })
+
+  release()
+  release()
+  registry.dispose()
+  assert.equal(cleaned, 1)
+  assert.equal(destroyed, 0)
+
+  const activeRegistry = createCustomerServiceModalRegistry()
+  activeRegistry.register({ destroy: () => (destroyed += 1) }, () => (cleaned += 1))
+  activeRegistry.dispose()
+  activeRegistry.dispose()
+  assert.equal(destroyed, 1)
+  assert.equal(cleaned, 2)
 })
 
 test('mutation 确认 guard 从打开确认框起防止重复并可释放', () => {
@@ -323,8 +419,8 @@ test('上传请求 dispose 会 abort 且迟到结果不更新页面', async () =
   const run = controller.run({ name: 'guide.pdf' })
   controller.dispose()
   assert.equal(signal?.aborted, true)
-  pending.resolve('uploaded')
   assert.equal(await run, false)
+  pending.resolve('uploaded')
   assert.deepEqual(applied, [])
 })
 

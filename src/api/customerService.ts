@@ -2,16 +2,21 @@ import type { AxiosResponse } from 'axios'
 import request from '@/request'
 import type { BaseResponse } from '@/api/app'
 import { apiTransformResponse } from '@/utils/http'
+import {
+  buildCustomerServiceKnowledgeUploadRequest,
+  encodeCustomerServiceKnowledgeId,
+} from '@/utils/customerService'
 
 export type { BaseResponse } from '@/api/app'
 
-export type CustomerServiceKnowledgeId = string | number
+export type LongValue = string | number
+export type CustomerServiceKnowledgeId = LongValue
 
 export interface CustomerServicePageResult<T> {
-  pageNumber?: number
-  pageSize?: number
-  totalPage?: number
-  totalRow?: number
+  pageNumber?: LongValue
+  pageSize?: LongValue
+  totalPage?: LongValue
+  totalRow?: LongValue
   records: T[]
 }
 
@@ -20,8 +25,8 @@ export interface CustomerServiceAskRequest {
 }
 
 export interface CustomerServiceSource {
-  documentId: string | number
-  documentVersion: number
+  documentId: LongValue
+  documentVersion: LongValue
   documentName: string
   chunkId: string
   locator: string
@@ -38,11 +43,11 @@ export interface CustomerServiceKnowledgeDocument {
   id: CustomerServiceKnowledgeId
   name: string
   fileType: string
-  fileSize: number
+  fileSize: LongValue
   contentHash: string
-  documentVersion: number
-  indexedVersion: number
-  etlVersion: number
+  documentVersion: LongValue
+  indexedVersion: LongValue
+  etlVersion: LongValue
   chunkCount: number
   status: string
   lastErrorCode?: string | null
@@ -55,8 +60,8 @@ export interface CustomerServiceKnowledgeDocument {
 export interface CustomerServiceKnowledgeTask {
   id: CustomerServiceKnowledgeId
   documentId: CustomerServiceKnowledgeId
-  documentVersion: number
-  etlVersion: number
+  documentVersion: LongValue
+  etlVersion: LongValue
   operation: string
   status: string
   retryCount: number
@@ -99,15 +104,13 @@ export function uploadCustomerServiceKnowledgeDocument(
   replacementId?: CustomerServiceKnowledgeId,
   signal?: AbortSignal,
 ): Promise<BaseResponse<CustomerServiceKnowledgeDocument>> {
-  const formData = new FormData()
-  formData.append('file', file)
+  const uploadRequest = buildCustomerServiceKnowledgeUploadRequest(file, replacementId, signal)
   return request
     .post<BaseResponse<CustomerServiceKnowledgeDocument>>(
       '/admin/customer-service/knowledge/upload',
-      formData,
+      uploadRequest.formData,
       {
-        params: replacementId === undefined ? undefined : { replacementId },
-        signal,
+        ...uploadRequest.config,
         transformResponse: apiTransformResponse,
       },
     )
@@ -133,38 +136,42 @@ export function getCustomerServiceKnowledgePage(
 export function reindexCustomerServiceKnowledgeDocument(
   id: CustomerServiceKnowledgeId,
 ): Promise<BaseResponse<CustomerServiceKnowledgeDocument>> {
+  const encodedId = encodeCustomerServiceKnowledgeId(id)
   return request
     .post<
       BaseResponse<CustomerServiceKnowledgeDocument>
-    >(`/admin/customer-service/knowledge/${id}:reindex`, undefined, { transformResponse: apiTransformResponse })
+    >(`/admin/customer-service/knowledge/${encodedId}:reindex`, undefined, { transformResponse: apiTransformResponse })
     .then(unwrapResponse)
 }
 
 export function enableCustomerServiceKnowledgeDocument(
   id: CustomerServiceKnowledgeId,
 ): Promise<BaseResponse<CustomerServiceKnowledgeDocument>> {
+  const encodedId = encodeCustomerServiceKnowledgeId(id)
   return request
     .post<
       BaseResponse<CustomerServiceKnowledgeDocument>
-    >(`/admin/customer-service/knowledge/${id}:enable`, undefined, { transformResponse: apiTransformResponse })
+    >(`/admin/customer-service/knowledge/${encodedId}:enable`, undefined, { transformResponse: apiTransformResponse })
     .then(unwrapResponse)
 }
 
 export function disableCustomerServiceKnowledgeDocument(
   id: CustomerServiceKnowledgeId,
 ): Promise<BaseResponse<CustomerServiceKnowledgeDocument>> {
+  const encodedId = encodeCustomerServiceKnowledgeId(id)
   return request
     .post<
       BaseResponse<CustomerServiceKnowledgeDocument>
-    >(`/admin/customer-service/knowledge/${id}:disable`, undefined, { transformResponse: apiTransformResponse })
+    >(`/admin/customer-service/knowledge/${encodedId}:disable`, undefined, { transformResponse: apiTransformResponse })
     .then(unwrapResponse)
 }
 
 export function deleteCustomerServiceKnowledgeDocument(
   id: CustomerServiceKnowledgeId,
 ): Promise<BaseResponse<boolean>> {
+  const encodedId = encodeCustomerServiceKnowledgeId(id)
   return request
-    .delete<BaseResponse<boolean>>(`/admin/customer-service/knowledge/${id}`, {
+    .delete<BaseResponse<boolean>>(`/admin/customer-service/knowledge/${encodedId}`, {
       transformResponse: apiTransformResponse,
     })
     .then(unwrapResponse)
@@ -175,9 +182,10 @@ export function getCustomerServiceKnowledgeTasks(
   limit = 20,
   signal?: AbortSignal,
 ): Promise<BaseResponse<CustomerServiceKnowledgeTask[]>> {
+  const encodedId = encodeCustomerServiceKnowledgeId(id)
   return request
     .get<BaseResponse<CustomerServiceKnowledgeTask[]>>(
-      `/admin/customer-service/knowledge/${id}/tasks`,
+      `/admin/customer-service/knowledge/${encodedId}/tasks`,
       {
         params: { limit },
         signal,
