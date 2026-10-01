@@ -32,6 +32,7 @@ const selectedKeys = ref<string[]>(['/admin/dashboard'])
 
 const adminMenuItems = computed<MenuProps['items']>(() => [
   { key: '/admin/dashboard', label: '数据报表' },
+  { key: '/admin/customer-service/knowledge', label: '客服知识库' },
   { key: '/admin/community/posts', label: '帖子审核' },
   { key: '/admin/community/comments', label: '评论管理' },
   { key: '/admin/community/tags', label: '标签管理' },

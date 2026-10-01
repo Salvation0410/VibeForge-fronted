@@ -3,16 +3,79 @@ import test from 'node:test'
 import type { CustomerServiceAnswer, CustomerServiceSource } from '../src/api/customerService.ts'
 import {
   CUSTOMER_SERVICE_EXCERPT_LIMIT,
+  CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT,
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
+  canRetryCustomerServiceKnowledgeDocument,
   createCustomerServiceRequestController,
+  getCustomerServiceDocumentStatus,
+  getCustomerServiceTaskStatus,
   getCustomerServiceQuestionLength,
   inspectCustomerServiceQuestion,
   isCustomerServiceRequestCancelled,
+  normalizeCustomerServiceErrorCode,
   normalizeCustomerServiceState,
   normalizeCustomerServiceSources,
+  validateCustomerServiceKnowledgeFile,
   validateCustomerServiceQuestion,
 } from '../src/utils/customerService.ts'
+
+test('知识库文件校验允许约定扩展名且大小写兼容', () => {
+  for (const name of ['guide.pdf', 'guide.DOCX', 'guide.md', 'guide.MARKDOWN', 'guide.Txt']) {
+    assert.deepEqual(validateCustomerServiceKnowledgeFile({ name, size: 1024 }), { valid: true })
+  }
+})
+
+test('知识库文件校验拒绝其他扩展名和超过 20 MiB 的文件', () => {
+  assert.equal(CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT, 20 * 1024 * 1024)
+  assert.deepEqual(validateCustomerServiceKnowledgeFile({ name: 'archive.zip', size: 1024 }), {
+    valid: false,
+    message: '仅支持 PDF、DOCX、MD、MARKDOWN、TXT 文件',
+  })
+  assert.deepEqual(
+    validateCustomerServiceKnowledgeFile({
+      name: 'guide.pdf',
+      size: CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT + 1,
+    }),
+    { valid: false, message: '文件大小不能超过 20 MiB' },
+  )
+})
+
+test('文档和 ETL 状态使用中文标签并为未知值提供稳定兜底', () => {
+  assert.equal(getCustomerServiceDocumentStatus('UPLOADED').label, '已上传')
+  assert.equal(getCustomerServiceDocumentStatus('INDEXING').label, '索引中')
+  assert.equal(getCustomerServiceDocumentStatus('ACTIVE').label, '已启用')
+  assert.equal(getCustomerServiceDocumentStatus('FAILED').label, '处理失败')
+  assert.equal(getCustomerServiceDocumentStatus('DISABLED').label, '已停用')
+  assert.equal(getCustomerServiceDocumentStatus('DELETING').label, '删除中')
+  assert.equal(getCustomerServiceDocumentStatus('future-status').label, '未知状态')
+
+  assert.equal(getCustomerServiceTaskStatus('PENDING').label, '待处理')
+  assert.equal(getCustomerServiceTaskStatus('PROCESSING').label, '处理中')
+  assert.equal(getCustomerServiceTaskStatus('SUCCEEDED').label, '已完成')
+  assert.equal(getCustomerServiceTaskStatus('FAILED').label, '失败')
+  assert.equal(getCustomerServiceTaskStatus('SKIPPED').label, '已跳过')
+  assert.equal(getCustomerServiceTaskStatus('future-status').label, '未知状态')
+})
+
+test('仅失败文档允许重新索引', () => {
+  assert.equal(canRetryCustomerServiceKnowledgeDocument('FAILED'), true)
+  for (const status of ['UPLOADED', 'INDEXING', 'ACTIVE', 'DISABLED', 'DELETING', undefined]) {
+    assert.equal(canRetryCustomerServiceKnowledgeDocument(status), false)
+  }
+})
+
+test('错误码只展示稳定 KNOWLEDGE code 并隐藏敏感或大段内容', () => {
+  assert.equal(normalizeCustomerServiceErrorCode(' knowledge_ai_timeout '), 'KNOWLEDGE_AI_TIMEOUT')
+  assert.equal(normalizeCustomerServiceErrorCode(null), '—')
+  assert.equal(
+    normalizeCustomerServiceErrorCode('https://oss.example/signed?token=secret'),
+    'UNKNOWN_ERROR',
+  )
+  assert.equal(normalizeCustomerServiceErrorCode('apiKey=secret'), 'UNKNOWN_ERROR')
+  assert.equal(normalizeCustomerServiceErrorCode('[0.1,0.2,0.3]'), 'UNKNOWN_ERROR')
+  assert.equal(normalizeCustomerServiceErrorCode('这是一段不应展示的文档全文'), 'UNKNOWN_ERROR')
+})
 
 function source(chunkId: string, excerpt: string): CustomerServiceSource {
   return {

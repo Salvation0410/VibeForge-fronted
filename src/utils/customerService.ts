@@ -9,6 +9,81 @@ export const CUSTOMER_SERVICE_SOURCE_LIMIT = 3
 export const CUSTOMER_SERVICE_EXCERPT_LIMIT = 180
 export const CUSTOMER_SERVICE_QUESTION_LIMIT = 4000
 export const CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT = 16000
+export const CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT = 20 * 1024 * 1024
+
+const CUSTOMER_SERVICE_KNOWLEDGE_EXTENSIONS = new Set(['pdf', 'docx', 'md', 'markdown', 'txt'])
+
+export interface CustomerServiceStatusMeta {
+  label: string
+  color: string
+}
+
+export interface CustomerServiceKnowledgeFileLike {
+  name: string
+  size: number
+}
+
+export type CustomerServiceKnowledgeFileValidation =
+  | { valid: true }
+  | { valid: false; message: string }
+
+const DOCUMENT_STATUS_META: Record<string, CustomerServiceStatusMeta> = {
+  UPLOADED: { label: '已上传', color: 'blue' },
+  INDEXING: { label: '索引中', color: 'processing' },
+  ACTIVE: { label: '已启用', color: 'success' },
+  FAILED: { label: '处理失败', color: 'error' },
+  DISABLED: { label: '已停用', color: 'default' },
+  DELETING: { label: '删除中', color: 'warning' },
+}
+
+const TASK_STATUS_META: Record<string, CustomerServiceStatusMeta> = {
+  PENDING: { label: '待处理', color: 'blue' },
+  PROCESSING: { label: '处理中', color: 'processing' },
+  SUCCEEDED: { label: '已完成', color: 'success' },
+  FAILED: { label: '失败', color: 'error' },
+  SKIPPED: { label: '已跳过', color: 'default' },
+}
+
+const UNKNOWN_STATUS_META: CustomerServiceStatusMeta = { label: '未知状态', color: 'default' }
+const STABLE_KNOWLEDGE_ERROR_CODE = /^KNOWLEDGE_[A-Z0-9_]{1,118}$/
+
+export function validateCustomerServiceKnowledgeFile(
+  file: CustomerServiceKnowledgeFileLike,
+): CustomerServiceKnowledgeFileValidation {
+  const extension = file.name.trim().split('.').pop()?.toLowerCase()
+  if (!extension || !CUSTOMER_SERVICE_KNOWLEDGE_EXTENSIONS.has(extension)) {
+    return { valid: false, message: '仅支持 PDF、DOCX、MD、MARKDOWN、TXT 文件' }
+  }
+  if (file.size <= 0) {
+    return { valid: false, message: '文件不能为空' }
+  }
+  if (file.size > CUSTOMER_SERVICE_KNOWLEDGE_FILE_SIZE_LIMIT) {
+    return { valid: false, message: '文件大小不能超过 20 MiB' }
+  }
+  return { valid: true }
+}
+
+export function getCustomerServiceDocumentStatus(
+  status?: string | null,
+): CustomerServiceStatusMeta {
+  return DOCUMENT_STATUS_META[String(status ?? '').toUpperCase()] ?? UNKNOWN_STATUS_META
+}
+
+export function getCustomerServiceTaskStatus(status?: string | null): CustomerServiceStatusMeta {
+  return TASK_STATUS_META[String(status ?? '').toUpperCase()] ?? UNKNOWN_STATUS_META
+}
+
+export function canRetryCustomerServiceKnowledgeDocument(status?: string | null): boolean {
+  return String(status ?? '').toUpperCase() === 'FAILED'
+}
+
+export function normalizeCustomerServiceErrorCode(code?: string | null): string {
+  if (!code?.trim()) {
+    return '—'
+  }
+  const normalized = code.trim().toUpperCase()
+  return STABLE_KNOWLEDGE_ERROR_CODE.test(normalized) ? normalized : 'UNKNOWN_ERROR'
+}
 
 export type CustomerServiceQuestionValidation =
   | { valid: true; question: string }
