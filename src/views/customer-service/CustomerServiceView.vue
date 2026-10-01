@@ -11,30 +11,37 @@
       <a-textarea
         id="customer-service-question"
         v-model:value="question"
-        :maxlength="CUSTOMER_SERVICE_QUESTION_LIMIT"
         :auto-size="{ minRows: 4, maxRows: 8 }"
-        show-count
         placeholder="例如：如何修改应用名称？"
         :disabled="loading"
         :aria-invalid="showQuestionError ? 'true' : 'false'"
-        aria-describedby="customer-service-question-help"
+        aria-describedby="customer-service-question-help customer-service-question-count"
         @keydown.ctrl.enter.prevent="submitQuestion"
         @keydown.meta.enter.prevent="submitQuestion"
       />
       <div class="question-actions">
-        <span
-          id="customer-service-question-help"
-          class="input-hint"
-          :class="{ 'validation-error': showQuestionError }"
-          aria-live="polite"
-          :role="showQuestionError ? 'alert' : undefined"
-        >
-          {{
-            showQuestionError
-              ? questionErrorMessage
-              : '最多 4000 个字符，按 Ctrl / Command + Enter 可提交'
-          }}
-        </span>
+        <div class="question-feedback">
+          <span
+            id="customer-service-question-help"
+            class="input-hint"
+            :class="{ 'validation-error': showQuestionError }"
+            aria-live="polite"
+            :role="showQuestionError ? 'alert' : undefined"
+          >
+            {{
+              showQuestionError
+                ? questionErrorMessage
+                : '最多 4000 个字符，按 Ctrl / Command + Enter 可提交'
+            }}
+          </span>
+          <span
+            id="customer-service-question-count"
+            class="question-count"
+            :class="{ 'validation-error': questionLength > CUSTOMER_SERVICE_QUESTION_LIMIT }"
+          >
+            {{ questionLength }} / {{ CUSTOMER_SERVICE_QUESTION_LIMIT }}
+          </span>
+        </div>
         <div class="button-group">
           <a-button v-if="loading" danger @click="cancelQuestion">取消提问</a-button>
           <a-button
@@ -120,6 +127,7 @@ import { askCustomerService } from '@/api/customerService'
 import {
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   createCustomerServiceRequestController,
+  getCustomerServiceQuestionLength,
   type CustomerServiceUiState,
   validateCustomerServiceQuestion,
 } from '@/utils/customerService'
@@ -137,6 +145,7 @@ const requestController = createCustomerServiceRequestController({
 })
 
 const questionValidation = computed(() => validateCustomerServiceQuestion(question.value))
+const questionLength = computed(() => getCustomerServiceQuestionLength(question.value))
 const questionErrorMessage = computed(() =>
   questionValidation.value.valid ? '' : questionValidation.value.message,
 )
@@ -231,6 +240,20 @@ onBeforeUnmount(() => {
 .input-hint {
   color: #8a98ab;
   font-size: 12px;
+}
+
+.question-feedback {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.question-count {
+  flex: none;
+  color: #8a98ab;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .validation-error {

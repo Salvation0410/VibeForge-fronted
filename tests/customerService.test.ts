@@ -6,6 +6,7 @@ import {
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
   createCustomerServiceRequestController,
+  getCustomerServiceQuestionLength,
   isCustomerServiceRequestCancelled,
   normalizeCustomerServiceState,
   normalizeCustomerServiceSources,
@@ -130,6 +131,22 @@ test('问题校验遵守 16000 UTF-8 字节保护并覆盖 emoji 边界', () => 
   assert.deepEqual(validateCustomerServiceQuestion('😀'.repeat(4001)), {
     valid: false,
     message: '问题内容过长，请精简后重试',
+  })
+})
+
+test('问题计数和校验使用 UTF-16 code unit 对齐后端边界', () => {
+  const maximumEmojiQuestion = '😀'.repeat(2000)
+  const oversizedEmojiQuestion = '😀'.repeat(2001)
+
+  assert.equal(getCustomerServiceQuestionLength(maximumEmojiQuestion), 4000)
+  assert.deepEqual(validateCustomerServiceQuestion(maximumEmojiQuestion), {
+    valid: true,
+    question: maximumEmojiQuestion,
+  })
+  assert.equal(getCustomerServiceQuestionLength(oversizedEmojiQuestion), 4002)
+  assert.deepEqual(validateCustomerServiceQuestion(oversizedEmojiQuestion), {
+    valid: false,
+    message: '问题不能超过 4000 个字符',
   })
 })
 

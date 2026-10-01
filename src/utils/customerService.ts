@@ -34,6 +34,10 @@ export interface CustomerServiceRequestControllerOptions {
   onStateChange: (state: CustomerServiceRequestState) => void
 }
 
+export function getCustomerServiceQuestionLength(question: string): number {
+  return question.length
+}
+
 export function validateCustomerServiceQuestion(
   question: string,
 ): CustomerServiceQuestionValidation {
@@ -47,7 +51,7 @@ export function validateCustomerServiceQuestion(
     return { valid: false, message: '问题内容过长，请精简后重试' }
   }
 
-  if (normalizedQuestion.length > CUSTOMER_SERVICE_QUESTION_LIMIT) {
+  if (getCustomerServiceQuestionLength(normalizedQuestion) > CUSTOMER_SERVICE_QUESTION_LIMIT) {
     return { valid: false, message: '问题不能超过 4000 个字符' }
   }
 
