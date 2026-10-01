@@ -14,6 +14,21 @@ export type CustomerServiceQuestionValidation =
   | { valid: true; question: string }
   | { valid: false; message: string }
 
+export type CustomerServiceQuestionInspection =
+  | {
+      normalizedQuestion: string
+      length: number
+      byteLength: number
+      valid: true
+    }
+  | {
+      normalizedQuestion: string
+      length: number
+      byteLength: number
+      valid: false
+      message: string
+    }
+
 export type CustomerServiceUiState =
   | { status: 'answered'; answer: string; sources: CustomerServiceSource[] }
   | { status: 'no-answer' }
@@ -35,27 +50,41 @@ export interface CustomerServiceRequestControllerOptions {
 }
 
 export function getCustomerServiceQuestionLength(question: string): number {
-  return question.length
+  return question.trim().length
+}
+
+export function inspectCustomerServiceQuestion(
+  question: string,
+): CustomerServiceQuestionInspection {
+  const normalizedQuestion = question.trim()
+  const length = normalizedQuestion.length
+  const byteLength = new TextEncoder().encode(normalizedQuestion).byteLength
+  const details = { normalizedQuestion, length, byteLength }
+
+  if (!normalizedQuestion) {
+    return { ...details, valid: false, message: '请输入问题' }
+  }
+
+  if (byteLength > CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT) {
+    return { ...details, valid: false, message: '问题内容过长，请精简后重试' }
+  }
+
+  if (length > CUSTOMER_SERVICE_QUESTION_LIMIT) {
+    return { ...details, valid: false, message: '问题不能超过 4000 个字符' }
+  }
+
+  return { ...details, valid: true }
 }
 
 export function validateCustomerServiceQuestion(
   question: string,
 ): CustomerServiceQuestionValidation {
-  const normalizedQuestion = question.trim()
-  if (!normalizedQuestion) {
-    return { valid: false, message: '请输入问题' }
+  const inspection = inspectCustomerServiceQuestion(question)
+  if (!inspection.valid) {
+    return { valid: false, message: inspection.message }
   }
 
-  const utf8ByteLength = new TextEncoder().encode(normalizedQuestion).byteLength
-  if (utf8ByteLength > CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT) {
-    return { valid: false, message: '问题内容过长，请精简后重试' }
-  }
-
-  if (getCustomerServiceQuestionLength(normalizedQuestion) > CUSTOMER_SERVICE_QUESTION_LIMIT) {
-    return { valid: false, message: '问题不能超过 4000 个字符' }
-  }
-
-  return { valid: true, question: normalizedQuestion }
+  return { valid: true, question: inspection.normalizedQuestion }
 }
 
 function truncateExcerpt(excerpt: string): string {
@@ -135,8 +164,8 @@ export function createCustomerServiceRequestController({
   }
 
   const submit = async (question: string): Promise<boolean> => {
-    const validation = validateCustomerServiceQuestion(question)
-    if (!validation.valid || state.loading || disposed) {
+    const inspection = inspectCustomerServiceQuestion(question)
+    if (!inspection.valid || state.loading || disposed) {
       return false
     }
 
@@ -146,7 +175,7 @@ export function createCustomerServiceRequestController({
     updateState({ loading: true, uiState: null })
 
     try {
-      const response = await request(validation.question, controller.signal)
+      const response = await request(inspection.normalizedQuestion, controller.signal)
       if (disposed || currentSequence !== requestSequence) {
         return false
       }

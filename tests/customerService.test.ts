@@ -7,6 +7,7 @@ import {
   CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
   createCustomerServiceRequestController,
   getCustomerServiceQuestionLength,
+  inspectCustomerServiceQuestion,
   isCustomerServiceRequestCancelled,
   normalizeCustomerServiceState,
   normalizeCustomerServiceSources,
@@ -148,6 +149,43 @@ test('问题计数和校验使用 UTF-16 code unit 对齐后端边界', () => {
     valid: false,
     message: '问题不能超过 4000 个字符',
   })
+})
+
+test('问题检查统一使用规范化后的文本、长度和校验状态', () => {
+  assert.deepEqual(inspectCustomerServiceQuestion(`${'a'.repeat(4000)} `), {
+    normalizedQuestion: 'a'.repeat(4000),
+    length: 4000,
+    byteLength: 4000,
+    valid: true,
+  })
+  assert.deepEqual(inspectCustomerServiceQuestion(` ${'a'.repeat(4001)} `), {
+    normalizedQuestion: 'a'.repeat(4001),
+    length: 4001,
+    byteLength: 4001,
+    valid: false,
+    message: '问题不能超过 4000 个字符',
+  })
+  assert.deepEqual(inspectCustomerServiceQuestion(' \n\t '), {
+    normalizedQuestion: '',
+    length: 0,
+    byteLength: 0,
+    valid: false,
+    message: '请输入问题',
+  })
+})
+
+test('请求 controller 发送与页面计数相同的规范化问题', async () => {
+  let sentQuestion = ''
+  const controller = createCustomerServiceRequestController({
+    request: async (question) => {
+      sentQuestion = question
+      return answeredResponse('回答')
+    },
+    onStateChange: () => undefined,
+  })
+
+  assert.equal(await controller.submit(`${'a'.repeat(4000)} `), true)
+  assert.equal(sentQuestion, 'a'.repeat(4000))
 })
 
 function deferred<T>() {

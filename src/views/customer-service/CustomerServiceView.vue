@@ -127,9 +127,8 @@ import { askCustomerService } from '@/api/customerService'
 import {
   CUSTOMER_SERVICE_QUESTION_LIMIT,
   createCustomerServiceRequestController,
-  getCustomerServiceQuestionLength,
+  inspectCustomerServiceQuestion,
   type CustomerServiceUiState,
-  validateCustomerServiceQuestion,
 } from '@/utils/customerService'
 
 const question = ref('')
@@ -144,15 +143,15 @@ const requestController = createCustomerServiceRequestController({
   },
 })
 
-const questionValidation = computed(() => validateCustomerServiceQuestion(question.value))
-const questionLength = computed(() => getCustomerServiceQuestionLength(question.value))
+const questionInspection = computed(() => inspectCustomerServiceQuestion(question.value))
+const questionLength = computed(() => questionInspection.value.length)
 const questionErrorMessage = computed(() =>
-  questionValidation.value.valid ? '' : questionValidation.value.message,
+  questionInspection.value.valid ? '' : questionInspection.value.message,
 )
 const showQuestionError = computed(
   () => Boolean(question.value) && Boolean(questionErrorMessage.value),
 )
-const canSubmit = computed(() => !loading.value && questionValidation.value.valid)
+const canSubmit = computed(() => !loading.value && questionInspection.value.valid)
 
 function submitQuestion() {
   return requestController.submit(question.value)
