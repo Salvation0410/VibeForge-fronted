@@ -11,7 +11,7 @@
       <a-textarea
         id="customer-service-question"
         v-model:value="question"
-        :maxlength="QUESTION_LIMIT"
+        :maxlength="CUSTOMER_SERVICE_QUESTION_LIMIT"
         :auto-size="{ minRows: 4, maxRows: 8 }"
         show-count
         placeholder="例如：如何修改应用名称？"
@@ -20,7 +20,13 @@
         @keydown.meta.enter.prevent="submitQuestion"
       />
       <div class="question-actions">
-        <span class="input-hint">按 Ctrl / Command + Enter 可提交</span>
+        <span class="input-hint">
+          {{
+            question && !questionValidation.valid
+              ? questionValidation.message
+              : '最多 4000 个字符，按 Ctrl / Command + Enter 可提交'
+          }}
+        </span>
         <div class="button-group">
           <a-button v-if="loading" danger @click="cancelQuestion">取消提问</a-button>
           <a-button
@@ -105,12 +111,12 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { askCustomerService } from '@/api/customerService'
 import { isSuccessCode } from '@/utils/appUtils'
 import {
+  CUSTOMER_SERVICE_QUESTION_LIMIT,
   isCustomerServiceRequestCancelled,
   normalizeCustomerServiceState,
   type CustomerServiceUiState,
+  validateCustomerServiceQuestion,
 } from '@/utils/customerService'
-
-const QUESTION_LIMIT = 1000
 
 const question = ref('')
 const loading = ref(false)
@@ -118,16 +124,12 @@ const uiState = ref<CustomerServiceUiState | null>(null)
 let activeController: AbortController | null = null
 let requestSequence = 0
 
-const canSubmit = computed(() => {
-  const normalizedQuestion = question.value.trim()
-  return (
-    !loading.value && normalizedQuestion.length > 0 && normalizedQuestion.length <= QUESTION_LIMIT
-  )
-})
+const questionValidation = computed(() => validateCustomerServiceQuestion(question.value))
+const canSubmit = computed(() => !loading.value && questionValidation.value.valid)
 
 async function submitQuestion() {
-  const normalizedQuestion = question.value.trim()
-  if (!normalizedQuestion || normalizedQuestion.length > QUESTION_LIMIT || loading.value) {
+  const validation = validateCustomerServiceQuestion(question.value)
+  if (!validation.valid || loading.value) {
     return
   }
 
@@ -138,7 +140,7 @@ async function submitQuestion() {
   uiState.value = null
 
   try {
-    const response = await askCustomerService(normalizedQuestion, controller.signal)
+    const response = await askCustomerService(validation.question, controller.signal)
     if (currentSequence !== requestSequence) {
       return
     }

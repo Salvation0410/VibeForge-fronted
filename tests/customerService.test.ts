@@ -3,9 +3,12 @@ import test from 'node:test'
 import type { CustomerServiceAnswer, CustomerServiceSource } from '../src/api/customerService.ts'
 import {
   CUSTOMER_SERVICE_EXCERPT_LIMIT,
+  CUSTOMER_SERVICE_QUESTION_LIMIT,
+  CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT,
   isCustomerServiceRequestCancelled,
   normalizeCustomerServiceState,
   normalizeCustomerServiceSources,
+  validateCustomerServiceQuestion,
 } from '../src/utils/customerService.ts'
 
 function source(chunkId: string, excerpt: string): CustomerServiceSource {
@@ -89,4 +92,29 @@ test('取消判定优先使用 AbortSignal 状态', () => {
 
   assert.equal(isCustomerServiceRequestCancelled(new Error('任意错误'), controller.signal), true)
   assert.equal(isCustomerServiceRequestCancelled(new Error('cancelled')), false)
+})
+
+test('问题校验允许 4000 字符并拒绝 4001 字符和空白', () => {
+  assert.equal(CUSTOMER_SERVICE_QUESTION_LIMIT, 4000)
+  assert.deepEqual(validateCustomerServiceQuestion('问'.repeat(4000)), {
+    valid: true,
+    question: '问'.repeat(4000),
+  })
+  assert.deepEqual(validateCustomerServiceQuestion('问'.repeat(4001)), {
+    valid: false,
+    message: '问题不能超过 4000 个字符',
+  })
+  assert.deepEqual(validateCustomerServiceQuestion(' \n\t '), {
+    valid: false,
+    message: '请输入问题',
+  })
+})
+
+test('问题校验遵守 16000 UTF-8 字节保护并覆盖 emoji 边界', () => {
+  assert.equal(CUSTOMER_SERVICE_QUESTION_UTF8_BYTE_LIMIT, 16000)
+  assert.equal(validateCustomerServiceQuestion('😀'.repeat(2000)).valid, true)
+  assert.deepEqual(validateCustomerServiceQuestion('😀'.repeat(4001)), {
+    valid: false,
+    message: '问题内容过长，请精简后重试',
+  })
 })
