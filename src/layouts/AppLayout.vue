@@ -71,6 +71,9 @@ function resolveMenuKey(path: string) {
   if (path.startsWith('/community')) {
     return '/community'
   }
+  if (path.startsWith('/customer-service')) {
+    return '/customer-service'
+  }
   if (path.startsWith('/home')) {
     return '/home'
   }
@@ -103,6 +106,9 @@ const menuItems = computed<MenuProps['items']>(() => {
     { key: '/docs', label: '使用文档' },
     { key: '/community', label: '交流社区' },
   ]
+  if (loginUserStore.isLogin) {
+    items.splice(1, 0, { key: '/customer-service', label: '智能客服' })
+  }
   if (isAdmin.value) {
     items.push({ key: '/admin', label: '后台管理' })
   }
