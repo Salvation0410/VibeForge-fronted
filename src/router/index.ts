@@ -17,6 +17,8 @@ import CommunityTagAdminView from '@/views/community/CommunityTagAdminView.vue'
 import PostCreateView from '@/views/community/PostCreateView.vue'
 import AdminLayoutView from '@/views/admin/AdminLayoutView.vue'
 import AdminDashboardView from '@/views/admin/AdminDashboardView.vue'
+import CustomerServiceKnowledgeView from '@/views/admin/CustomerServiceKnowledgeView.vue'
+import CustomerServiceView from '@/views/customer-service/CustomerServiceView.vue'
 import { setupPermissionGuard } from '@/permission'
 
 const router = createRouter({
@@ -49,6 +51,15 @@ const router = createRouter({
           meta: {
             title: '使用文档',
             requiresAuth: false,
+          },
+        },
+        {
+          path: 'customer-service',
+          name: 'customerService',
+          component: CustomerServiceView,
+          meta: {
+            title: '智能客服',
+            requiresAuth: true,
           },
         },
         {
@@ -202,6 +213,16 @@ const router = createRouter({
               component: AdminDashboardView,
               meta: {
                 title: '数据报表',
+                requiresAuth: true,
+                roles: ['admin'],
+              },
+            },
+            {
+              path: 'customer-service/knowledge',
+              name: 'adminCustomerServiceKnowledge',
+              component: CustomerServiceKnowledgeView,
+              meta: {
+                title: '客服知识库',
                 requiresAuth: true,
                 roles: ['admin'],
               },
