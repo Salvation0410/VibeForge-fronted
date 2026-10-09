@@ -272,7 +272,8 @@ const handleDeleteMyApp = async (app: AppVO) => {
       throw new Error(res.message || '删除应用失败')
     }
     message.success('应用已删除')
-    await loadMyApps()
+    // 两个列表展示同一应用，删除后同步回源，避免精选卡片继续指向已删除的详情。
+    await Promise.all([loadMyApps(), loadGoodApps()])
   } catch (error) {
     message.error(error instanceof Error ? error.message : '删除应用失败')
   }
