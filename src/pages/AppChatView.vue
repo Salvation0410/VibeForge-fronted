@@ -1003,7 +1003,15 @@ const sendMessage = async (presetContent?: string, options: SendMessageOptions =
       previewFailureCode.value = errorData.errorCode
 
       updateMessageContent(assistantMessageId, () => `${errorMessage}${requestHint}`)
-      message.error(`${errorMessage}${requestHint}`)
+      if (errorData.errorCode?.startsWith('INPUT_') && !inputMessage.value.trim()) {
+        // 审核未通过时恢复原需求，便于补充答案；保留生成期间用户新输入的内容。
+        inputMessage.value = rawContent
+      }
+      if (errorData.errorCode === 'INPUT_CLARIFICATION_REQUIRED') {
+        message.warning(`${errorMessage}${requestHint}`)
+      } else {
+        message.error(`${errorMessage}${requestHint}`)
+      }
     },
     onError: () => {
       if (runId !== generationRunId || generationUiState.value === 'stopping') {
